@@ -45,6 +45,8 @@ lockstep with the physical world. Specifically, it provides:
 | 9 | Advanced co-simulation (shared physical media) | **Done** |
 | 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | **Done** |
 | 11 | RISC-V Expansion & Framework Maturation | To Do |
+| 12 | Advanced Observability & Interactive APIs | To Do |
+| 13 | AI Debugging & MCP Interface | To Do |
 
 See `PLAN.md` for the per-task checklist.
 
@@ -186,8 +188,11 @@ virtmcu/
 │   └── docker-compose.yml      # Standalone test environment
 │
 ├── docs/
-│   ├── ARCHITECTURE.md         # Full technical deep-dive (read this first)
-│   └── MIGRATION_GUIDE.md      # Step-by-step migration per phase
+│   ├── ARCHITECTURE.md                 # Full technical deep-dive (read this first)
+│   ├── MIGRATION_GUIDE.md              # Step-by-step migration per phase
+│   ├── TIME_MANAGEMENT_DESIGN.md       # Details on clock modes and the Big QEMU Lock
+│   ├── OPENUSD_INTEGRATION_DESIGN.md   # OpenUSD/YAML mapping strategy
+│   └── MCP_DESIGN.md                   # Model Context Protocol server design for AI agents
 │
 └── requirements.txt            # Python: qemu.qmp, robotframework, lark, eclipse-zenoh
 ```
@@ -329,6 +334,28 @@ a network, without the SystemC dependency.
 **What we adopt from qbox**: Cooperative suspend/resume — hooking into the TCG loop at
 quantum boundaries and blocking the QEMU thread until the external scheduler replies via
 Zenoh (rather than SystemC). Same TB-boundary precision, no in-process SystemC.
+
+---
+
+## Agent Skills & Workflows
+
+This project uses the `addyosmani/agent-skills` suite for Gemini CLI and Claude Code to enforce senior-level engineering discipline.
+
+### Always-On Workflows
+The following workflows are foundational to this project's development lifecycle. Agents should always follow these patterns:
+
+*   **@skills/incremental-implementation**: Deliver changes in atomic, verifiable slices. Never dump large, untested changes into the codebase.
+*   **@skills/code-review-and-quality**: Conduct a multi-axis review (Logic, Security, Performance, Maintainability, Style) before finalizing any change.
+*   **@skills/test-driven-development**: For every bug fix or new feature, provide empirical proof via tests before and after the change.
+
+### Phase-Specific Skills
+Use these specialized skills for targeted tasks:
+*   `/spec` (`spec-driven-development`): Use when requirements are unclear or for new architectural components.
+*   `/plan` (`planning-and-task-breakdown`): Use to decompose complex architectural changes (like Phase 11 RISC-V expansion).
+*   `/simplify` (`code-simplification`): Use during refactoring to maintain clarity in complex C/Rust peripheral models.
+*   `/security` (`security-and-hardening`): Mandatory when modifying Zenoh networking or any logic handling external inputs.
+
+In **Claude Code**, these are available as slash commands (e.g., `/spec`, `/plan`). In **Gemini CLI**, these activate automatically based on task context or can be explicitly invoked.
 
 ---
 

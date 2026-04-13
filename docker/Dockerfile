@@ -47,9 +47,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb \
         gdb-multiarch \
         gcc-arm-none-eabi \
+        gcc-riscv64-linux-gnu \
+        binutils-riscv64-linux-gnu \
         cargo \
         rustc \
         gh \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Stage 1: devenv ───────────────────────────────────────────────────────────
@@ -58,6 +61,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # https://github.com/devcontainers/images/tree/main/src/base-ubuntu
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04 AS devenv
+
+LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
+LABEL org.opencontainers.image.description="virtmcu development environment — toolchain + AI tools"
+LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -84,10 +91,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gdb \
         gdb-multiarch \
         gcc-arm-none-eabi \
+        gcc-riscv64-linux-gnu \
+        binutils-riscv64-linux-gnu \
         cargo \
         rustc \
         strace \
         gh \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 24 (required for Gemini CLI)
@@ -185,7 +195,7 @@ RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
 RUN cd qemu \
     && ./configure \
         --prefix=/opt/virtmcu \
-        --target-list="${ARCH}-softmmu" \
+        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
         --enable-modules \
         --enable-fdt \
         --disable-werror \
@@ -200,6 +210,10 @@ ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS runtime
+
+LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
+LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
+LABEL org.opencontainers.image.licenses=MIT
 
 ARG ARCH
 ENV ARCH=${ARCH}

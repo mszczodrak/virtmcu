@@ -293,7 +293,7 @@ Implement after Path B is validated.
 - [x] **5.2** (Deferred) Implement Path B: strip Renode `IntegrationLibrary` headers from existing
       Verilated models; integrate `libsystemctlm-soc`; write `hw/remote-port/` QOM device;
       validate end-to-end with one Renode-derived Verilated model.
-- [x] **5.3** (Deferred) *(P2)* Write `hw/etherbone/etherbone-bridge.c` — MMIO → UDP for FPGA-over-network.
+- [ ] **5.3** (Deferred) *(P2)* Write `hw/etherbone/etherbone-bridge.c` — MMIO → UDP for FPGA-over-network. (Deferred to later; no implementation currently in `hw/`)
 - [x] **5.4** Document Path A vs B vs C decision guide (already in `docs/ARCHITECTURE.md` §9).
 - [x] **5.5** Write tutorial lesson 5: Hardware Co-simulation and SystemC bridges.
 
@@ -506,10 +506,79 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Expand architecture support to RISC-V, resolve technical debt around virtual-time testing, establish Path B co-simulation (Remote Port), and formally migrate the upstream FirmwareStudio repository to use `virtmcu`.
 
 **Tasks**:
-- [ ] **11.1** **RISC-V Machine Generation**: Extend the dynamic machine generation pipeline (`repl2qemu`) and QEMU patches to support RISC-V targets, removing the ARM-only restriction.
-- [ ] **11.2** **Virtual-Time-Aware Timeouts**: Update the Robot Framework QMP library (`qmp_bridge.py`) to poll `query-cpus-fast` for virtual time, replacing wall-clock timeouts for reliable testing in `slaved-icount` mode.
-- [ ] **11.3** **Remote Port Co-Simulation (Path B)**: Implement full TLM-2.0 co-simulation via AMD/Xilinx Remote Port to support Verilated FPGA fabrics and high-bandwidth SoC subsystems.
+- [x] **11.1** **RISC-V Machine Generation**: Extend the dynamic machine generation pipeline (`repl2qemu`) and QEMU patches to support RISC-V targets, removing the ARM-only restriction.
+- [x] **11.2** **Virtual-Time-Aware Timeouts**: Update the Robot Framework QMP library (`qmp_bridge.py`) to poll `query-cpus-fast` for virtual time, replacing wall-clock timeouts for reliable testing in `slaved-icount` mode.
+- [x] **11.3** **Remote Port Co-Simulation (Path B)**: Implement full TLM-2.0 co-simulation via AMD/Xilinx Remote Port to support Verilated FPGA fabrics and high-bandwidth SoC subsystems.
 - [ ] **11.4** **FirmwareStudio Upstream Migration**: Refactor the parent FirmwareStudio project to delete Python-in-the-loop scripts (`node_agent.py`, `shm_bridge.py`), switch default clock to `slaved-suspend`, and adopt virtmcu's dynamic QEMU 11.0.0-rc3 container image.
+
+---
+
+## Phase 12 — Advanced Observability & Interactive APIs (COOJA-Inspired)
+
+**Goal**: Provide the backend APIs and deterministic telemetry streams required for FirmwareStudio to build a rich, COOJA-like interactive frontend (visual timelines, dynamic radio environments, and interactive virtual boards) without introducing a GUI into QEMU.
+
+**Tasks**:
+- [ ] **12.1** **Deterministic Telemetry Tracing (Timeline Enabler)**: Implement `hw/zenoh/zenoh-telemetry.c` to trace CPU sleep states (`WFI`/`WFE`), IRQ firings, and key peripheral state changes, publishing them to `sim/telemetry/trace/{node_id}` stamped with exact `QEMU_CLOCK_VIRTUAL` nanoseconds.
+- [ ] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates from the physics engine without restarting the simulation.
+- [ ] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) to automatically bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics, allowing any frontend to render interactive widgets.
+- [ ] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology using the new Zenoh APIs.
+
+---
+
+## Phase 13 — AI Debugging & MCP Interface
+
+**Goal**: Provide a Model Context Protocol (MCP) server that enables AI agents to semantically interact with the simulation. This allows an AI to provision boards, flash firmware, and debug running systems via high-level tools rather than raw shell commands.
+
+**Tasks**:
+- [ ] **13.1** **MCP Lifecycle Tools**: Implement tools to `provision_board`, `flash_firmware`, `start_node`, and `stop_node`, wrapping the existing `yaml2qemu` and `run.sh` pipelines.
+- [ ] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
+- [ ] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
+- [ ] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
+
+---
+
+## Phase 14 — Wireless & IoT RF Simulation (BLE, Thread, WiFi)
+
+**Goal**: Provide deterministic, virtual-timestamped simulation of wireless transceivers to bridge the gap between simple Ethernet and complex IoT meshing.
+
+**Tasks**:
+- [ ] **14.1** **HCI over Zenoh (BLE)**: Implement a Bluetooth HCI backend using QEMU's `-chardev` that publishes/subscribes to Zenoh topics instead of standard host bluetooth stacks, enabling deterministic BLE meshing between virtual nodes.
+- [ ] **14.2** **802.15.4 / Thread MAC**: Implement a generic 802.15.4 MAC layer MMIO peripheral or a standard SPI-based radio interface (like an nRF transceiver) that routes frames through the `zenoh_coordinator`.
+- [ ] **14.3** **RF Propagation Models**: Expand the `zenoh_coordinator` to apply Free Space Path Loss (FSPL) and Friis transmission calculations based on XYZ coordinates provided by the physics engine.
+- [ ] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
+
+---
+
+## Phase 15 — Distribution & Packaging
+
+**Goal**: Remove the friction of compiling QEMU from source. Distribute `virtmcu` as an easily installable suite.
+
+**Tasks**:
+- [ ] **15.1** **Python Tools PyPI Package**: Package `repl2qemu`, `yaml2qemu`, and `mcp_server` into a standalone PyPI package (`virtmcu-tools`).
+- [ ] **15.2** **Binary Releases**: Establish a GitHub Actions pipeline to compile the patched `qemu-system-arm` and `hw-virtmcu-zenoh.so` binaries for `x86_64-linux` and `aarch64-linux` (and macOS if plugins issue is resolved).
+- [ ] **15.3** **Tutorial Lesson 15**: Setup and Distribution. Installing and running `virtmcu` from binaries instead of source.
+
+---
+
+## Phase 16 — Performance & Determinism CI
+
+**Goal**: Establish rigorous performance regression testing to ensure that the synchronization mechanisms (TCG hooks and Zenoh) do not silently degrade over time.
+
+**Tasks**:
+- [ ] **16.1** **IPS Benchmarking**: Add a CI step that runs a heavy mathematical payload in `standalone`, `slaved-suspend`, and `slaved-icount` modes and logs the Instructions-Per-Second (IPS).
+- [ ] **16.2** **Latency Tracking**: Measure the exact Zenoh round-trip time per quantum in the CI environment and fail the build if it exceeds the 1ms threshold.
+- [ ] **16.3** **Tutorial Lesson 16**: Profiling and Benchmarking virtmcu.
+
+---
+
+## Phase 17 — Security & Hardening (Fuzzing)
+
+**Goal**: Protect the simulation boundary. Given that virtmcu ingests data from external networks and files, ensure the emulated environment cannot be crashed or escaped via malformed inputs.
+
+**Tasks**:
+- [ ] **17.1** **Network Boundary Fuzzing**: Implement a fuzzer (e.g., AFL++) against `hw/zenoh/zenoh-netdev.c` and `zenoh-chardev.c` to ensure corrupted Zenoh frames do not cause buffer overflows in the QEMU address space.
+- [ ] **17.2** **Parser Fuzzing**: Apply fuzzing to `tools/repl2qemu/parser.py` and the YAML parsers to ensure malformed configuration files fail gracefully.
+- [ ] **17.3** **Tutorial Lesson 17**: Securing the Digital Twin Boundary.
 
 ---
 

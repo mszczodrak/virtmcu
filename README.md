@@ -38,8 +38,8 @@ in inter-node timing.
 
 ## Architecture in One Paragraph
 
-**QEMU 11.0.0-rc3**, augmented with the **arm-generic-fdt** patch series, instantiates
-ARM hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
+**QEMU 11.0.0-rc3**, augmented with the **arm-generic-fdt** patch series and native **RISC-V virt** capabilities, instantiates
+ARM and RISC-V hardware entirely from a Device Tree blob at runtime. Custom peripheral models compile
 as **shared libraries** and are auto-discovered via QEMU's module system — no `LD_PRELOAD`,
 no recompilation of the emulator. A native **Zenoh QOM plugin** (`hw/zenoh/`) links
 `zenoh-c` directly into QEMU: it hooks the TCG execution loop at translation-block
@@ -57,8 +57,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-d
 
 ## Core Capabilities
 
-- **Dynamic ARM Machines**: Instantiate any ARM board from a Device Tree (`.dtb`) at
-  runtime using the `arm-generic-fdt` machine type. No hardcoded C machine structs.
+- **Dynamic ARM and RISC-V Machines**: Instantiate boards from a Device Tree (`.dtb`) at
+  runtime using the `arm-generic-fdt` or `virt` machine types. No hardcoded C machine structs.
 
 - **Dynamic QOM Plugins**: Write peripherals in C or Rust, compile to `.so`, load with
   `-device` — no QEMU recompilation required. Discovered automatically via QEMU's module
@@ -103,16 +103,16 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full technical deep-d
 
 ```
 virtmcu/
-├── CLAUDE.md                   # AI agent context: all constraints and decisions
-├── PLAN.md                     # Phased task checklist — check here for status
-├── CONTRIBUTING.md             # Setup, dev workflow, code style
+├── CLAUDE.md                   # AI agent context: constraints and architecture decisions
+├── CONTRIBUTING.md             # Dev workflow, code style, setup
 │
 ├── hw/                         # C/Rust QOM peripheral models (no Python in sim loop)
 │   ├── dummy/dummy.c           # Minimal QOM SysBusDevice — start here (C)
 │   ├── rust-dummy/             # Minimal QOM SysBusDevice — start here (Rust FFI)
 │   ├── misc/
-│   │   └── mmio-socket-bridge.c # [Phase 5] SystemC co-simulation bridge
-│   ├── zenoh/                  # Native Zenoh QOM plugin (Phase 7+)
+│   │   └── mmio-socket-bridge.c # Legacy custom socket bridge
+│   ├── remote-port/            # AMD/Xilinx Remote Port QOM bridge for SystemC/Verilator
+│   ├── zenoh/                  # Native Zenoh QOM plugin
 │   │   ├── zenoh-clock.c       # TCG cooperative halt + Zenoh clock sync
 │   │   ├── zenoh-netdev.c      # Deterministic multi-node Ethernet backend
 │   │   └── zenoh-chardev.c     # Deterministic multi-node UART backend
@@ -120,6 +120,9 @@ virtmcu/
 │
 ├── tools/
 │   ├── repl2qemu/              # .repl / .yaml → Device Tree + QEMU CLI (offline)
+│   ├── systemc_adapter/        # C++ SystemC TLM-2.0 ↔ Remote Port / Custom Socket bridge
+│   ├── cyber_bridge/           # C++ SAL/AAL telemetry and MuJoCo shm synchronization
+│   ├── zenoh_coordinator/      # Rust daemon for strictly ordering multi-node frames
 │   └── testing/
 │       ├── qemu_keywords.robot # Robot Framework compatibility layer
 │       ├── test_qmp.py         # pytest primary test suite
@@ -132,14 +135,17 @@ virtmcu/
 │
 ├── scripts/
 │   ├── setup-qemu.sh           # Clone QEMU, apply patches, symlink hw/, build
-│   └── run.sh                  # Launch wrapper: sets QEMU_MODULE_DIR
+│   └── run.sh                  # Launch wrapper: sets QEMU_MODULE_DIR, detects arch
 │
 ├── docker/
 │   ├── Dockerfile              # Multi-stage: toolchain / devenv / builder / runtime
 │   └── docker-compose.yml      # Standalone test environment
 │
+├── test/                       # End-to-end integration and smoke tests per subsystem
+│
 └── docs/
-    └── ARCHITECTURE.md         # Deep-dive: design pillars, timing, prior art, ADRs
+    ├── ARCHITECTURE.md         # Deep-dive: design pillars, timing, prior art, ADRs
+    └── TIME_MANAGEMENT_DESIGN.md # Detailed guide to BQL mechanics and physics sync
 ```
 
 ---
@@ -149,6 +155,8 @@ virtmcu/
 **Read the architecture first**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Sections 1–3 cover the design rationale and the five implementation pillars. Section 5
 covers the timing design and BQL constraints. Section 6 covers prior art (qbox, MINRES).
+
+**For a deep dive on clock modes and BQL mechanics**: [`docs/TIME_MANAGEMENT_DESIGN.md`](docs/TIME_MANAGEMENT_DESIGN.md).
 
 **Write a new peripheral**: Copy `hw/dummy/dummy.c`. Rename, implement MMIO ops, add an
 entry in `hw/meson.build`. Run `make build` then:
@@ -215,22 +223,15 @@ make run          # smoke-test
 
 ## Current Status
 
-See [`PLAN.md`](PLAN.md) for the full phased checklist.
+The core framework development is complete. All architectural pillars and capabilities listed above have been implemented, tested, and integrated into the CI/CD pipeline.
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 0 | Repository setup, documentation | **Done** |
-| 1 | QEMU build with arm-generic-fdt patches | **Done** |
-| 2 | Dynamic QOM plugin infrastructure | **Done** |
-| 3 | repl2qemu parser (.repl → .dtb + QEMU CLI) | **Done** |
-| 3.5 | YAML Platform & OpenUSD Alignment | **Done** |
-| 4 | Robot Framework QMP library | **Done** |
-| 5 | Co-Simulation Bridge | **Done** |
-| 6 | Multi-node Zenoh network coordinator | **Done** |
-| 7 | Native Zenoh clock plugin + FirmwareStudio integration | **Done** |
-| 8 | Deterministic multi-node UART (zenoh-chardev) | **Done** |
-| 9 | Advanced co-simulation (shared physical media) | **Done** |
-| 10 | Sensor/Actuator Abstraction Layers (SAL/AAL) | **Done** |
+- [x] Dynamic ARM and RISC-V machine generation from `.repl` and `.yaml` files.
+- [x] Dynamic QOM plugin infrastructure for C and Rust peripherals.
+- [x] Native Zenoh clock plugin (`slaved-suspend` and `slaved-icount` modes) for physics engine synchronization.
+- [x] Deterministic multi-node Ethernet and UART communication via Zenoh.
+- [x] Sensor/Actuator Abstraction Layers (SAL/AAL) for MuJoCo and OpenUSD integration.
+- [x] Full TLM-2.0 co-simulation via AMD/Xilinx Remote Port and SystemC.
+- [x] Automated test suite using pytest, QMP, and Robot Framework keywords.
 
 ---
 

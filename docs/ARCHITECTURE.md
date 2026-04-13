@@ -34,26 +34,26 @@ sensor/actuator abstraction layer. These capabilities have no direct equivalent 
 ┌──────────────────────────────────────────────────────────────────────┐
 │  FirmwareStudio World                                                │
 │                                                                      │
-│  ┌──────────────┐   mj_step()   ┌──────────────────┐               │
-│  │  MuJoCo      │ ────────────► │  TimeAuthority   │               │
-│  │  (physics)   │               │  (Python)        │               │
-│  │              │ ◄──────────── │                  │               │
-│  └──────────────┘  sensor data  └────────┬─────────┘               │
+│  ┌──────────────┐   mj_step()   ┌──────────────────┐                 │
+│  │  MuJoCo      │ ────────────► │  TimeAuthority   │                 │
+│  │  (physics)   │               │  (Python)        │                 │
+│  │              │ ◄──────────── │                  │                 │
+│  └──────────────┘  sensor data  └────────┬─────────┘                 │
 │                                          │                           │
-│                     Zenoh GET sim/clock/advance/{node_id}           │
-│                     (no Python middleman — native C plugin)         │
+│                     Zenoh GET sim/clock/advance/{node_id}            │
+│                     (no Python middleman — native C plugin)          │
 │                                          │                           │
-│              ┌───────────────────────────┼────────────────────┐     │
-│              │  QEMU node 0              │  QEMU node 1       │     │
-│              │  + hw/zenoh/              │  + hw/zenoh/       │     │
-│              │    zenoh-clock.c  ◄───────┘    zenoh-clock.c   │     │
-│              │    zenoh-netdev.c ◄────────────zenoh-netdev.c  │     │
-│              │    zenoh-chardev.c◄────────────zenoh-chardev.c │     │
-│              │  + QOM peripherals        │  + QOM peripherals │     │
-│              │    (SAL/AAL boundary)     │    (SAL/AAL boundary)│    │
-│              │                           │                    │     │
-│              │  firmware (bare-metal C)  │  firmware          │     │
-│              └───────────────────────────┴────────────────────┘     │
+│              ┌───────────────────────────┼────────────────────┐      │
+│              │  QEMU node 0              │  QEMU node 1       │      │
+│              │  + hw/zenoh/              │  + hw/zenoh/       │      │
+│              │    zenoh-clock.c  ◄───────┘    zenoh-clock.c   │      │
+│              │    zenoh-netdev.c ◄────────────zenoh-netdev.c  │      │
+│              │    zenoh-chardev.c◄────────────zenoh-chardev.c │      │
+│              │  + QOM peripherals        │  + QOM peripherals │      │
+│              │    (SAL/AAL boundary)     │    (SAL/AAL boundary)  │      │
+│              │                           │                    │      │
+│              │  firmware (bare-metal C)  │  firmware          │      │
+│              └───────────────────────────┴────────────────────┘      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,15 +84,13 @@ the next advance.
 3. On reply, re-acquires the BQL and optionally advances `timers_state.qemu_icount_bias`
    for exact nanosecond virtual time in `slaved-icount` mode.
 
-**Two slaved modes**:
+**Three clock modes**:
 
 | Mode | QEMU flags | Throughput | Use when |
 |---|---|---|---|
-| `slaved-suspend` | (none) | **~95%** — only TB-boundary pause | **Default.** Control loops ≥ one quantum. |
-| `slaved-icount` | `-icount shift=0,align=off,sleep=off` | **~15–20%** | Firmware measures sub-quantum intervals (PWM, µs DMA). |
-
-`standalone` mode (no zenoh-clock device) runs at full TCG speed, used for development
-and CI without a physics engine.
+| `standalone` | (none) | **100%** | Development and CI without a physics engine. Full TCG speed. |
+| `slaved-suspend` | `-device zenoh-clock,mode=suspend` | **~95%** — only TB-boundary pause | **Default.** Control loops ≥ one quantum. |
+| `slaved-icount` | `-device zenoh-clock,mode=icount`<br>`-icount shift=0,align=off,sleep=off` | **~15–20%** | Firmware measures sub-quantum intervals (PWM, µs DMA). |
 
 **BQL constraint**: The Zenoh `GET` call must always be made with the BQL released.
 Blocking while holding the BQL deadlocks the QEMU process — the main event loop (QMP,
@@ -157,9 +155,9 @@ The SAL/AAL lives at the QOM peripheral boundary:
 QEMU traditionally requires recompiling the emulator to add a new device or define a new
 machine. virtmcu eliminates both constraints.
 
-**Dynamic machines** (`arm-generic-fdt` patch series): A new ARM machine type that
-instantiates CPUs, memory, and peripherals entirely from a Device Tree blob at runtime.
-`-machine arm-generic-fdt -hw-dtb board.dtb` replaces the hardcoded C machine struct.
+**Dynamic machines** (`arm-generic-fdt` patch series & `virt` machine): Machine types that
+instantiate CPUs, memory, and peripherals entirely from a Device Tree blob at runtime.
+`-machine arm-generic-fdt -hw-dtb board.dtb` (for ARM) or `-machine virt -dtb board.dtb` (for RISC-V) replaces the hardcoded C machine structs.
 
 **Dynamic QOM plugins**: `hw/` is symlinked into QEMU's source tree and compiled as proper
 QEMU modules (`--enable-modules`). The resulting `.so` files are auto-discovered via
@@ -229,9 +227,20 @@ not in git). In Docker: built from source at `ZENOH_C_REF` (default `1.8.0`).
 `hw/zenoh/meson.build` resolves `meson.project_source_root()/../zenoh-c`, which is
 correct for both `third_party/qemu` (local) and `/build/qemu` (Docker).
 
+**Runtime Linking Requirement (`LD_LIBRARY_PATH`)**: Because `libzenohc.so` is compiled
+and stored in non-standard project-local paths (e.g., `third_party/zenoh-c/lib` or
+`/opt/virtmcu/lib`) rather than system-wide directories like `/usr/lib`, QEMU cannot
+resolve the dependency when it `dlopen()`s the `hw-virtmcu-zenoh.so` plugin. 
+Therefore, `scripts/run.sh` explicitly prepends the appropriate `zenoh-c/lib` path to
+the `LD_LIBRARY_PATH` environment variable before invoking QEMU. If this path is lost
+(e.g., during refactoring), QEMU will silently fail to load the Zenoh networking and
+clock plugins.
+
 ---
 
 ## 5. Timing Design and Performance
+
+> **See also:** [docs/TIME_MANAGEMENT_DESIGN.md](TIME_MANAGEMENT_DESIGN.md) — sequence diagrams, Big QEMU Lock mechanics, clock mode selection, and virtual-time test automation in one place.
 
 ### Clock Mode Selection
 
@@ -409,7 +418,28 @@ all Cortex-M targets.
 execution. Cortex-M profiles are not supported by any current hypervisor; QEMU silently
 falls back to TCG anyway and may misbehave with `-accel kvm` on M-profile targets.
 
-## 6. Guide for Junior Developers
+---
+
+## 9. AI and Advanced Observability (Phase 12 & 13)
+
+As virtmcu evolves from a foundational emulator into a robust digital twin environment, observability and AI accessibility become first-class concerns.
+
+### Advanced Observability (COOJA-Inspired)
+FirmwareStudio needs rich, interactive observability (visual timelines, network topologies, interactive virtual boards). virtmcu provides this without embedding a GUI into QEMU by:
+1. Tracing CPU sleep states and peripheral events via `hw/zenoh/zenoh-telemetry.c` and publishing deterministic timelines over Zenoh.
+2. Enabling dynamic manipulation of network latency and drop rates via RPC endpoints on the `zenoh_coordinator`.
+3. Emitting UI state (LEDs, Buttons) via SAL/AAL abstraction topics.
+
+### AI Debugging & MCP Interface
+To support LLM-driven debugging and lifecycle management, virtmcu includes a standalone **Model Context Protocol (MCP)** server (`tools/mcp_server/`).
+- **Control**: AI agents can provision boards, flash firmware, and control node lifecycle (start/stop/pause).
+- **Introspection**: AI agents can inspect raw memory, registers, and disassemble code dynamically via the `qmp_bridge.py` wrapper.
+- **I/O Integration**: Agents can interact with UART consoles and monitor network state.
+*(For more details, see `docs/MCP_DESIGN.md`)*.
+
+---
+
+## 10. Guide for Junior Developers
 
 If you are new to QEMU, SystemC, physics simulators (like MuJoCo), or Zenoh, the `virtmcu` codebase can seem intimidating because it glues all these domains together. Here is how you should approach learning the system:
 
