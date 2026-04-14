@@ -10,6 +10,22 @@
 
 set -euo pipefail
 
+echo "=============================================================================="
+echo "🧪 RUNNING TEST: $(basename "$0")"
+echo "=============================================================================="
+cat << 'TEST_DOC_BLOCK'
+==============================================================================
+smoke_test.sh (Phase 11.3 — Path B: Remote Port Co-Simulation)
+
+What this tests:
+  Validates the full Path B co-simulation pipeline via AMD/Xilinx Remote Port:
+    QEMU firmware write/read → remote-port-bridge (QOM) → Unix socket →
+    SystemC adapter (rp_adapter) using libsystemctlm-soc → TLM-2.0 → RegisterFile
+==============================================================================
+TEST_DOC_BLOCK
+echo "=============================================================================="
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_SH="$WORKSPACE_DIR/scripts/run.sh"
@@ -64,7 +80,7 @@ _start:
     str r1, [r0, #4]
 
     /* WFI loop */
-1:  wfi
+1:  nop
     b 1b
 ASM_EOF
 

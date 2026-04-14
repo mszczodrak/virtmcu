@@ -9,13 +9,13 @@
 # Build args:
 #   QEMU_REPO     upstream QEMU git URL
 #   QEMU_REF      git ref to check out (tag, branch, or SHA)
-#   ZENOH_C_REF   zenoh-c git tag to build (no 'v' prefix, e.g. 1.8.0)
+#   ZENOH_C_REF   zenoh-c git tag to build (no 'v' prefix, e.g. 1.9.0)
 #   ARCH          target architecture (arm | aarch64)
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
-ARG ZENOH_C_REF=1.8.0
-ARG ARCH=arm
+ARG ZENOH_C_REF=1.9.0
+ARG TARGETARCH
 
 # ── Stage 0: toolchain ────────────────────────────────────────────────────────
 # Plain ubuntu with all build dependencies. Used directly by the builder stage
@@ -109,6 +109,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # npm install -g is deprecated since Feb 2026; native installer puts binary in ~/.local/bin
 USER vscode
 RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/vscode/.local/bin:${PATH}"
 # hadolint ignore=DL3002
 USER root
 
@@ -125,7 +126,10 @@ FROM toolchain AS builder
 ARG QEMU_REPO
 ARG QEMU_REF
 ARG ZENOH_C_REF
-ARG ARCH
+ARG TARGETARCH
+
+# We emulate ARM microcontrollers regardless of the host architecture
+ENV ARCH=arm
 
 WORKDIR /build
 
@@ -138,9 +142,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Clone QEMU before COPYing local files so that patch/hw changes do not bust
 # this expensive layer. Cache key: QEMU_REF arg.
 # hadolint ignore=DL3003
-RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu \
-    && cd qemu \
-    && git submodule update --init --recursive --depth=1
+RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 
 # Build zenoh-c from source and install to /build/zenoh-c.
 # Placed after the QEMU clone (both are network-only) so neither busts the
@@ -215,13 +217,16 @@ LABEL org.opencontainers.image.source=https://github.com/refractsystems/virtmcu
 LABEL org.opencontainers.image.description="virtmcu runtime image — QEMU + Python simulation tools"
 LABEL org.opencontainers.image.licenses=MIT
 
-ARG ARCH
-ENV ARCH=${ARCH}
+ARG TARGETARCH
+# We emulate ARM microcontrollers regardless of the host architecture
+ENV ARCH=arm
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
+        device-tree-compiler \
+        coreutils \
         libglib2.0-0 \
         libpixman-1-0 \
         libslirp0 \
@@ -241,6 +246,7 @@ WORKDIR /app
 
 # Make qemu-system-* available on PATH
 ENV PATH="/opt/virtmcu/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/virtmcu/lib"
 ENV QEMU_MODULE_DIR="/opt/virtmcu/lib/qemu"
 
 # Default: print version and wait (worlds override CMD)

@@ -209,6 +209,7 @@ static void zclock_quantum_hook(CPUState *cpu)
 
     /* Step 7: consume quantum_ready, release mutex. */
     s->quantum_ready = false;
+    s->quantum_done  = false;
     
     int64_t next_delta = qatomic_read(&s->delta_ns);
     qatomic_set(&s->quantum_start_vtime_ns, s->vtime_ns);
@@ -269,7 +270,7 @@ static void on_query(z_loaned_query_t *query, void *context)
     qatomic_set(&s->delta_ns, (int64_t)req.delta_ns);
     qatomic_set(&s->mujoco_time_ns, (int64_t)req.mujoco_time_ns);
     
-    s->quantum_done  = false;
+    s->quantum_done = false;
     s->quantum_ready = true;
     qemu_cond_signal(&s->vcpu_cond);
 
@@ -322,6 +323,24 @@ static void zenoh_clock_realize(DeviceState *dev, Error **errp)
 
     z_owned_config_t config;
     z_config_default(&config);
+
+    if (s->router) {
+        char json[256];
+        snprintf(json, sizeof(json), "[\"%s\"]", s->router);
+        if (zc_config_insert_json5(z_config_loan_mut(&config), "connect/endpoints", json) != 0) {
+            error_setg(errp, "Failed to set Zenoh router endpoint: %s", s->router);
+            z_config_drop(z_move(config));
+            return;
+        }
+        /*
+         * Disable multicast scouting when an explicit router is set.
+         * Multi-container environments (Docker Compose on macOS, Kubernetes)
+         * drop multicast UDP between containers; the test must fail if QEMU
+         * ignores router= and falls back to multicast peer discovery.
+         */
+        zc_config_insert_json5(z_config_loan_mut(&config),
+                               "scouting/multicast/enabled", "false");
+    }
 
     if (z_open(&s->session, z_move(config), NULL) != 0) {
         error_setg(errp, "Failed to open Zenoh session");
