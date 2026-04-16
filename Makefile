@@ -76,6 +76,9 @@ test-integration: venv
 	@echo "==> Building test artifacts..."
 	@$(MAKE) -C test/phase1
 	@$(MAKE) -C test/phase8
+	@$(MAKE) -C test/phase12
+	@$(MAKE) -C test/actuator
+	@$(MAKE) -C test/riscv
 	@echo "==> Running integration tests..."
 	@for test_script in test/*/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
@@ -102,9 +105,39 @@ test-robot: venv
 	  tests/test_qmp_keywords.robot \
 	  tests/test_interactive_echo.robot
 
+# Run guest firmware coverage analysis (Phase 1)
+test-coverage-guest: build-test-artifacts
+	@echo "==> Running guest firmware coverage (drcov)..."
+	uv run python3 -m pyelftools --version >/dev/null 2>&1 || uv pip install pyelftools
+	@./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
+	  -display none -plugin third_party/qemu/build-virtmcu/contrib/plugins/libdrcov.so,filename=hello.drcov -d plugin
+	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
+	@echo "✓ Guest coverage check passed."
+
+# Generate host-side C/Rust coverage report (requires lcov)
+coverage-report:
+	@echo "==> Generating host-side coverage report..."
+	@mkdir -p test-results/coverage
+	lcov --quiet --capture \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-dummy.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-mmio-socket-bridge.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-remote-port-bridge.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-rust-dummy.a.p \
+		--directory $(QEMU_BUILD)/libhw-virtmcu-zenoh.a.p \
+		--output-file test-results/coverage/host.info --rc branch_coverage=1 --ignore-errors empty
+	lcov --quiet --extract test-results/coverage/host.info "*/hw/virtmcu/*" --output-file test-results/coverage/host_filtered.info --rc branch_coverage=1
+	genhtml --quiet test-results/coverage/host_filtered.info --output-directory test-results/coverage/html --title "virtmcu Host Coverage" --legend --branch-coverage
+	@echo "✓ Report generated: test-results/coverage/html/index.html"
+
+build-test-artifacts:
+	@$(MAKE) -C test/phase1
+	@$(MAKE) -C test/phase8
+	@$(MAKE) -C test/phase12
+	@$(MAKE) -C test/actuator
+	@$(MAKE) -C test/riscv
+
 # Run the complete test suite: unit tests, integration smoke tests, Robot tests.
-# Requires a built QEMU (run make setup first).
-test-all: test test-integration test-robot
+test-all: test test-integration test-robot test-coverage-guest
 
 # ------------------------------------------------------------------------------
 # Lint & Format

@@ -151,8 +151,7 @@ echo "[phase5] Starting QEMU..."
     --kernel "$ELF_PATH" \
     -nographic \
     -monitor none \
-    -qmp "unix:$QMP_SOCK,server,nowait" \
-    > "$QEMU_LOG" 2>&1 &
+    -qmp "unix:$QMP_SOCK,server,nowait" > "$QEMU_LOG" 2>&1 &
 QEMU_PID=$!
 
 # ── 6. Wait for adapter to log the expected transactions ─────────────────────

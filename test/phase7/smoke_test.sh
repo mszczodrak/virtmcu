@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock suspend & icount modes.
+# test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock-rust suspend & icount modes.
 set -euo pipefail
 
 echo "=============================================================================="
 echo "🧪 RUNNING TEST: $(basename "$0")"
 echo "=============================================================================="
 cat << 'TEST_DOC_BLOCK'
-test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock suspend & icount modes.
+test/phase7/smoke_test.sh — Phase 7 smoke test: zenoh-clock-rust suspend & icount modes.
 TEST_DOC_BLOCK
 echo "=============================================================================="
 
@@ -20,7 +20,7 @@ ROUTER_PID=""
 cleanup() {
     [[ -n "${QEMU_PID:-}" ]] && kill -9 "$QEMU_PID" 2>/dev/null || true
     [[ -n "${ROUTER_PID:-}" ]] && kill -9 "$ROUTER_PID" 2>/dev/null || true
-    rm -rf "$TMPDIR_LOCAL"
+    # rm -rf "$TMPDIR_LOCAL"
 }
 trap cleanup EXIT
 
@@ -30,7 +30,7 @@ SECTIONS { . = 0x40000000; .text : { *(.text) } }
 LD_EOF
 cat > "$TMPDIR_LOCAL/firmware.S" <<'ASM_EOF'
 .global _start
-_start: loop: b loop
+_start: loop: nop; b loop
 ASM_EOF
 arm-none-eabi-gcc -mcpu=cortex-a15 -nostdlib -T "$TMPDIR_LOCAL/linker.ld" "$TMPDIR_LOCAL/firmware.S" -o "$TMPDIR_LOCAL/firmware.elf"
 
@@ -64,9 +64,10 @@ wait_for_queryable() {
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
 ROUTER_PID=$!
 sleep 1
-"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -device zenoh-clock,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
+"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -device zenoh-clock-rust,mode=suspend,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_suspend.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
+sleep 1
 python3 "$WORKSPACE_DIR/test/phase7/test_clock.py"
 kill -9 "$QEMU_PID" "$ROUTER_PID" 2>/dev/null || true
 QEMU_PID=""
@@ -76,9 +77,10 @@ ROUTER_PID=""
 python3 -u "$WORKSPACE_DIR/tests/zenoh_router_persistent.py" &
 ROUTER_PID=$!
 sleep 1
-"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -icount shift=0,align=off,sleep=off -device zenoh-clock,mode=icount,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
+"$WORKSPACE_DIR/scripts/run.sh" --dtb "$TMPDIR_LOCAL/dummy.dtb" -kernel "$TMPDIR_LOCAL/firmware.elf" -icount shift=0,align=off,sleep=off -device zenoh-clock-rust,mode=icount,node=0,router=tcp/127.0.0.1:7447 -nographic -monitor none > "$TMPDIR_LOCAL/qemu_icount.log" 2>&1 &
 QEMU_PID=$!
 wait_for_queryable "sim/clock/advance/0"
+sleep 1
 python3 "$WORKSPACE_DIR/test/phase7/test_clock.py"
 kill -9 "$QEMU_PID" "$ROUTER_PID" 2>/dev/null || true
 

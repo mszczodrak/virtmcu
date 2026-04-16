@@ -498,6 +498,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 - [x] **10.3** **Zero-Copy MuJoCo Bridge**: Optimize the Phase 7 implementation using shared memory (`mjData`) for integrated physics-driven simulation.
 - [x] **10.4** **OpenUSD Metadata Tool**: Write a utility to parse OpenUSD Robot Schemas and automatically generate the mapping boilerplate for virtmcu peripheral addresses.
 - [x] **10.5** **Tutorial Lesson 10**: The Cyber-Physical Bridge. Using RESD for CI/CD and MuJoCo for control-loop validation.
+- [x] **10.6** **Native Zenoh Actuator Support**: Implement `zenoh-actuator` QOM device to allow firmware to publish control signals directly to Zenoh topics (e.g. `firmware/control/{node}/{id}`).
 
 ---
 
@@ -513,15 +514,20 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
-## Phase 12 — Advanced Observability & Interactive APIs (COOJA-Inspired)
+## Phase 12 — Advanced Observability & Interactive APIs (COOJA-Inspired) ✅
 
-**Goal**: Provide the backend APIs and deterministic telemetry streams required for FirmwareStudio to build a rich, COOJA-like interactive frontend (visual timelines, dynamic radio environments, and interactive virtual boards) without introducing a GUI into QEMU.
+**Status**: Done (Hardened)
 
-**Tasks**:
-- [ ] **12.1** **Deterministic Telemetry Tracing (Timeline Enabler)**: Implement `hw/zenoh/zenoh-telemetry.c` to trace CPU sleep states (`WFI`/`WFE`), IRQ firings, and key peripheral state changes, publishing them to `sim/telemetry/trace/{node_id}` stamped with exact `QEMU_CLOCK_VIRTUAL` nanoseconds.
-- [ ] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates from the physics engine without restarting the simulation.
-- [ ] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) to automatically bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics, allowing any frontend to render interactive widgets.
-- [ ] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology using the new Zenoh APIs.
+### Tasks
+- [x] **12.1** **Deterministic Telemetry Tracing (Timeline Enabler)**: Implement `hw/zenoh/zenoh-telemetry.c` to trace CPU sleep states (`WFI`/`WFE`), IRQ firings, and key peripheral state changes, publishing them to `sim/telemetry/trace/{node_id}` stamped with exact `QEMU_CLOCK_VIRTUAL` nanoseconds.
+- [x] **12.2** **Dynamic Network Topology API (UDGM/DGRM Enabler)**: Expand `tools/zenoh_coordinator` to expose an RPC endpoint (e.g., `sim/network/control`) that accepts real-time link-quality matrices, packet drop probabilities, and distance updates.
+- [x] **12.3** **Standardized UI Topics (Interactive Boards Enabler)**: Extend the SAL/AAL interface (from Phase 10) and implement `hw/zenoh/zenoh-ui.c` to bind generic human-interface peripherals (Buttons, LEDs) to standard `sim/ui/{node_id}/...` Zenoh topics.
+- [x] **12.4** **Tutorial Lesson 12**: Advanced Observability. Teach how to capture and visualize deterministic QEMU execution traces and dynamically manipulate network topology.
+
+### Phase 12 Technical Debt & Future Risks
+- [x] **12.5** **Concurrency inside `irq_slots`**: Added `irq_slots_lock` (QemuMutex) to ensure thread-safety when IRQs are triggered outside the BQL.
+- [x] **12.6** **Struct Protocol Rigidity**: Migrated telemetry to FlatBuffers for schema evolution.
+- [ ] **12.7** **Safe QOM Path Resolution for IRQs**: (DEFERRED) Resolving canonical paths in `telemetry_irq_hook` is unsafe outside the BQL. A future revision should populate a name-cache during device realization or use `object_dynamic_cast` within a BQL-guaranteed wrapper.
 
 ---
 
@@ -530,10 +536,10 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Provide a Model Context Protocol (MCP) server that enables AI agents to semantically interact with the simulation. This allows an AI to provision boards, flash firmware, and debug running systems via high-level tools rather than raw shell commands.
 
 **Tasks**:
-- [ ] **13.1** **MCP Lifecycle Tools**: Implement tools to `provision_board`, `flash_firmware`, `start_node`, and `stop_node`, wrapping the existing `yaml2qemu` and `run.sh` pipelines.
-- [ ] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
-- [ ] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
-- [ ] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
+- [x] **13.1** **MCP Lifecycle Tools**: Implement tools to `provision_board`, `flash_firmware`, `start_node`, and `stop_node`, wrapping the existing `yaml2qemu` and `run.sh` pipelines.
+- [x] **13.2** **Semantic Debugging API**: Implement `read_cpu_state`, `read_memory`, and `inject_interrupt` by wrapping the `qmp_bridge.py` library.
+- [x] **13.3** **Zenoh-MCP Bridge**: Implement resources to stream UART console output and network status directly into the MCP client's context.
+- [x] **13.4** **Tutorial Lesson 13**: AI-Augmented Debugging. Teach how to use an MCP-enabled agent to diagnose a firmware crash (e.g., a stack overflow) in a multi-node environment.
 
 ---
 
@@ -542,10 +548,17 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 **Goal**: Provide deterministic, virtual-timestamped simulation of wireless transceivers to bridge the gap between simple Ethernet and complex IoT meshing.
 
 **Tasks**:
-- [ ] **14.1** **HCI over Zenoh (BLE)**: Implement a Bluetooth HCI backend using QEMU's `-chardev` that publishes/subscribes to Zenoh topics instead of standard host bluetooth stacks, enabling deterministic BLE meshing between virtual nodes.
-- [ ] **14.2** **802.15.4 / Thread MAC**: Implement a generic 802.15.4 MAC layer MMIO peripheral or a standard SPI-based radio interface (like an nRF transceiver) that routes frames through the `zenoh_coordinator`.
-- [ ] **14.3** **RF Propagation Models**: Expand the `zenoh_coordinator` to apply Free Space Path Loss (FSPL) and Friis transmission calculations based on XYZ coordinates provided by the physics engine.
-- [ ] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
+- [x] **14.1** **HCI over Zenoh (BLE)**: Implement a Bluetooth HCI backend using QEMU's `-chardev` that publishes/subscribes to Zenoh topics instead of standard host bluetooth stacks, enabling deterministic BLE meshing between virtual nodes.
+- [x] **14.2** **802.15.4 / Thread MAC**: Implement a generic 802.15.4 MAC layer MMIO peripheral or a standard SPI-based radio interface (like an nRF transceiver) that routes frames through the `zenoh_coordinator`.
+- [x] **14.3** **RF Propagation Models**: Expand the `zenoh_coordinator` to apply Free Space Path Loss (FSPL) and Friis transmission calculations based on XYZ coordinates provided by the physics engine.
+- [x] **14.4** **Tutorial Lesson 14**: Wireless Simulation. Simulating an IoT sensor network with dynamic RF attenuation.
+
+### Phase 14 Technical Debt & Future Risks
+- [ ] **14.5** **True 802.15.4 MAC State Machine**: `hw/zenoh/zenoh-802154.c` acts as a simple byte-pipe (FIFO). Real radios (e.g., nRF52840, AT86RF233) have complex state machines managing CSMA/CA, auto-ACKs, frame filtering by PAN ID/Short Address, and MAC-level timers. Guest firmware using standard Zephyr/Contiki drivers will fail without these hardware-level behaviors.
+- [ ] **14.6** **O(N²) RF Coordinator Scaling**: The coordinator broadcasts every RF packet to every known node, calculating Euclidean distance for each pair. A dense mesh network (100+ nodes) will bottleneck the single-threaded `tokio` select loop, stalling the deterministic simulation. Requires spatial partitioning (e.g., quad-trees).
+- [ ] **14.7** **Dynamic Topology vs. Static Hashmap**: The coordinator currently hardcodes the `node_positions` hash map. For true cyber-physical simulation, it must dynamically subscribe to `sim/telemetry/position` updates from the physics engine (e.g., MuJoCo).
+- [ ] **14.8** **RF Header Schema Rigidity**: The `ZenohRfHeader` uses rigid, 14-byte packed C-structs. Adding RF metadata (e.g., antenna ID, multi-path hints) will break fleet compatibility. Needs a FlatBuffers/CBOR migration similar to Phase 12 telemetry.
+- [ ] **14.9** **Isotropic RF Assumptions**: The current Free Space Path Loss (FSPL) model assumes perfect omnidirectional antennas and ignores multi-path fading, physical obstacles, and interference from overlapping transmissions.
 
 ---
 
@@ -582,6 +595,20 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 
 ---
 
+## Phase 18 — Native Rust Zenoh Migration (Oxidization)
+
+**Goal**: Eliminate the `zenoh-c` FFI layer by rewriting the core Zenoh plugins (`hw/zenoh/`) in native Rust. This improves concurrency safety, simplifies the build process, and aligns with the long-term architectural goal of using Rust for all safe simulation-loop components.
+
+**Tasks**:
+- [ ] **18.1** **Rust-QOM Foundation**: Stabilize the Rust QOM bindings (from `hw/rust-dummy/`) into a reusable framework for implementing `SysBusDevice`, `NetClient`, and `Chardev` backends in Rust.
+- [ ] **18.2** **Native Zenoh-Clock (Rust)**: Rewrite `zenoh-clock.c` in Rust. Use the native `zenoh` crate directly. Implement the BQL sandwich (`bql_unlock` -> `wait` -> `bql_lock`) using Rust safety patterns.
+- [ ] **18.3** **Native Zenoh-Netdev (Rust)**: Rewrite `zenoh-netdev.c` in Rust. Replace the C heap with `std::collections::BinaryHeap` for deterministic virtual-time delivery.
+- [ ] **18.4** **Native Zenoh-Chardev (Rust)**: Rewrite `zenoh-chardev.c` in Rust, enabling safe multi-node interactive UART communication.
+- [ ] **18.5** **Native Zenoh-Telemetry (Rust)**: Rewrite `zenoh-telemetry.c` in Rust and integrate with the FlatBuffers tracing schema from Phase 12.
+- [ ] **18.6** **Tutorial Lesson 18**: Developing QEMU Peripherals in Rust. Explain the `qom-rs` bindings and how to leverage Cargo for simulation plugins.
+
+---
+
 ## Risks and Open Questions
 
 | # | Risk | Mitigation |
@@ -596,6 +623,7 @@ tightens; prefer slaved-suspend if the firmware does not need sub-quantum timer 
 | R8 | FirmwareStudio `libqemu` patch uses placeholder git hashes (aaaa/bbbb) and may not apply | Must be manually rewritten with real context lines against QEMU 11.0.0-rc3 |
 | R9 | `apply_zenoh_hook.py` function-pointer injection may break on QEMU `cpu-exec.c` refactors | Keep injection minimal (one function pointer + one call site); re-validate on every QEMU version bump |
 | R10 | TCG cooperative-halt hooks may conflict with future QEMU upstream refactors | Keep hook surface minimal; track QEMU `accel/tcg/` API changes on each upstream bump |
+| R11 | Deadlock in `zenoh-clock.c` shutdown | `z_session_drop` in the main thread can deadlock with Zenoh callbacks waiting for the BQL. Needs a non-blocking shutdown sequence. |
 
 ---
 

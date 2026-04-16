@@ -121,6 +121,19 @@ if [ ! -d "$ZENOHC_DIR/include" ]; then
     rm /tmp/zenoh-c.zip
 fi
 
+# Phase 12: Fetch and compile flatcc for Telemetry
+FLATCC_DIR="$WORKSPACE_DIR/third_party/flatcc"
+if command -v flatcc >/dev/null 2>&1; then
+    echo "==> flatcc already installed in system, skipping local build."
+elif [ ! -x "$FLATCC_DIR/bin/flatcc" ]; then
+    echo "==> Fetching and compiling flatcc..."
+    mkdir -p "$WORKSPACE_DIR/third_party"
+    git clone https://github.com/dvidelabs/flatcc.git "$FLATCC_DIR"
+    cd "$FLATCC_DIR"
+    CFLAGS="-fPIC" ./scripts/build.sh
+    cd "$WORKSPACE_DIR"
+fi
+
 # Phase 2: Allow dynamic loading of SysBus devices via `-device`
 # The arm-generic-fdt patch does not set this by default, which breaks out-of-tree plugins.
 if ! grep -q "machine_class_allow_dynamic_sysbus_dev(mc, \"sys-bus-device\")" "$QEMU_DIR/hw/arm/arm_generic_fdt.c"; then
@@ -144,9 +157,9 @@ cd build-virtmcu
 # Configure the build, handling macOS specific plugin bugs (GitLab #516)
 if [ "$(uname)" = "Darwin" ]; then
     echo "macOS detected: disabling --enable-plugins to avoid GLib module conflicts"
-    ../configure --enable-modules --enable-fdt --enable-debug --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
+    ../configure --enable-modules --enable-fdt --enable-debug --enable-gcov --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
 else
-    ../configure --enable-modules --enable-fdt --enable-plugins --enable-debug --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
+    ../configure --enable-modules --enable-fdt --enable-plugins --enable-debug --enable-gcov --target-list=arm-softmmu,arm-linux-user,riscv32-softmmu,riscv64-softmmu,riscv32-linux-user,riscv64-linux-user --prefix="$(pwd)/install"
 fi
 
 # Compile QEMU using all available CPU cores

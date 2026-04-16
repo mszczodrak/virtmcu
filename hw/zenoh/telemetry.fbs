@@ -1,0 +1,17 @@
+namespace Virtmcu.Telemetry;
+
+enum TraceEventType : byte {
+    CPU_STATE = 0,
+    IRQ = 1,
+    PERIPHERAL = 2
+}
+
+table TraceEvent {
+    timestamp_ns: uint64;
+    type: TraceEventType;
+    id: uint32;
+    value: uint32;
+    device_name: string;
+}
+
+root_type TraceEvent;

@@ -13,7 +13,7 @@
  *     uint16_t reserved1;  must be zero
  *     uint32_t reserved2;  must be zero
  *     uint64_t vtime_ns;   QEMU virtual time in nanoseconds
- *     uint64_t addr;       byte offset within the mapped region
+ *     uint64_t addr;       byte offset within the mapped region (NOT absolute address)
  *     uint64_t data;       write value (ignored for reads)
  *
  *   Message (adapter → QEMU, sizeof = 16 bytes):
@@ -28,6 +28,14 @@
 #define VIRTMCU_PROTO_H
 
 #include <stdint.h>
+
+#define VIRTMCU_PROTO_MAGIC   0x564D4355 /* "VMCU" */
+#define VIRTMCU_PROTO_VERSION 1
+
+struct virtmcu_handshake {
+    uint32_t magic;
+    uint32_t version;
+} __attribute__((packed));
 
 #define MMIO_REQ_READ  0
 #define MMIO_REQ_WRITE 1
@@ -50,6 +58,17 @@ struct sysc_msg {
     uint32_t type;
     uint32_t irq_num;
     uint64_t data;
+} __attribute__((packed));
+
+struct clock_advance_req {
+    uint64_t delta_ns;
+    uint64_t mujoco_time_ns;
+} __attribute__((packed));
+
+struct clock_ready_resp {
+    uint64_t current_vtime_ns;
+    uint32_t n_frames;
+    uint32_t error_code; /* 0=OK, 1=STALL */
 } __attribute__((packed));
 
 #endif /* VIRTMCU_PROTO_H */

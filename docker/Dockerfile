@@ -10,12 +10,20 @@
 #   QEMU_REPO     upstream QEMU git URL
 #   QEMU_REF      git ref to check out (tag, branch, or SHA)
 #   ZENOH_C_REF   zenoh-c git tag to build (no 'v' prefix, e.g. 1.9.0)
+#   CMAKE_VERSION minimum cmake version required
 #   ARCH          target architecture (arm | aarch64)
 
 ARG QEMU_REPO=https://gitlab.com/qemu-project/qemu.git
 ARG QEMU_REF=v11.0.0-rc3
 ARG ZENOH_C_REF=1.9.0
+ARG CMAKE_VERSION=4.3.1
+ARG RUST_VERSION=1.95.0
+ARG FLATBUFFERS_VERSION=25.12.19
 ARG TARGETARCH
+
+# ── Stage 0: rust-builder ─────────────────────────────────────────────────────
+# Dedicated Rust toolchain stage for multi-stage parity.
+FROM rust:${RUST_VERSION}-slim AS rust-builder
 
 # ── Stage 0: toolchain ────────────────────────────────────────────────────────
 # Plain ubuntu with all build dependencies. Used directly by the builder stage
@@ -24,38 +32,64 @@ FROM ubuntu:24.04 AS toolchain
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        git \
-        cmake \
-        meson \
-        ninja-build \
-        python3 \
-        python3-venv \
-        pkg-config \
-        libglib2.0-dev \
-        libpixman-1-dev \
-        flex \
-        bison \
-        device-tree-compiler \
-        libslirp-dev \
-        curl \
-        wget \
-        ca-certificates \
-        b4 \
-        gdb \
-        gdb-multiarch \
-        gcc-arm-none-eabi \
-        gcc-riscv64-linux-gnu \
-        binutils-riscv64-linux-gnu \
-        cargo \
-        rustc \
-        gh \
-        jq \
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    ca-certificates \
+    gpg \
+    curl \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    build-essential \
+    git \
+    gh \
+    meson \
+    ninja-build \
+    python3 \
+    python3-venv \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    flex \
+    bison \
+    device-tree-compiler \
+    libslirp-dev \
+    curl \
+    ca-certificates \
+    b4 \
+    gdb \
+    gdb-multiarch \
+    gcc-arm-none-eabi \
+    gcc-riscv64-linux-gnu \
+    binutils-riscv64-linux-gnu \
+    jq \
+    lcov \
+    gcovr \
+    patchelf \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install FlatBuffers compiler from GitHub release
+ARG FLATBUFFERS_VERSION
+RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
+    && unzip /tmp/flatc.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/flatc \
+    && rm /tmp/flatc.zip
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
+# Install specific CMake version
+ARG CMAKE_VERSION=4.3.1
+RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
+
+
+# ── Stage: flatcc-builder ───────────────────────────────────────────────────
+# Build flatcc once to be shared across stages.
+FROM toolchain AS flatcc-builder
+# hadolint ignore=DL3003
+RUN git clone --depth=1 https://github.com/dvidelabs/flatcc.git /build/flatcc \
+    && cd /build/flatcc \
+    && CFLAGS="-fPIC" ./scripts/build.sh
 
 # ── Stage 1: devenv ───────────────────────────────────────────────────────────
 # Devcontainer image only. MCR base provides the vscode user + sudo setup.
@@ -70,39 +104,65 @@ LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        git \
-        cmake \
-        meson \
-        ninja-build \
-        python3 \
-        python3-venv \
-        pkg-config \
-        libglib2.0-dev \
-        libpixman-1-dev \
-        flex \
-        bison \
-        device-tree-compiler \
-        libslirp-dev \
-        curl \
-        wget \
-        ca-certificates \
-        b4 \
-        gdb \
-        gdb-multiarch \
-        gcc-arm-none-eabi \
-        gcc-riscv64-linux-gnu \
-        binutils-riscv64-linux-gnu \
-        cargo \
-        rustc \
-        strace \
-        gh \
-        jq \
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    ca-certificates \
+    gpg \
+    curl \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends --fix-missing \
+    build-essential \
+    git \
+    gh \
+    meson \
+    ninja-build \
+    python3 \
+    python3-venv \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    flex \
+    bison \
+    device-tree-compiler \
+    libslirp-dev \
+    curl \
+    ca-certificates \
+    b4 \
+    gdb \
+    gdb-multiarch \
+    gcc-arm-none-eabi \
+    gcc-riscv64-linux-gnu \
+    binutils-riscv64-linux-gnu \
+    strace \
+    jq \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install FlatBuffers compiler from GitHub release
+ARG FLATBUFFERS_VERSION
+RUN curl -L -o /tmp/flatc.zip "https://github.com/google/flatbuffers/releases/download/v${FLATBUFFERS_VERSION}/Linux.flatc.binary.clang++-18.zip" \
+    && unzip /tmp/flatc.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/flatc \
+    && rm /tmp/flatc.zip
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+
+# Install specific CMake version
+ARG CMAKE_VERSION=4.3.1
+RUN uv pip install --system --no-cache-dir cmake==${CMAKE_VERSION} --break-system-packages
+
+
+COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
+COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
+COPY --from=flatcc-builder /build/flatcc/lib/libflatcc* /usr/local/lib/
+
+# Copy Rust toolchain from rust-builder
+COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
+COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
 
 # Install Node.js 24 (required for Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
@@ -132,16 +192,21 @@ ARG QEMU_REF
 ARG ZENOH_C_REF
 ARG TARGETARCH
 
+COPY --from=flatcc-builder /build/flatcc/bin/flatcc /usr/local/bin/
+COPY --from=flatcc-builder /build/flatcc/include/flatcc /usr/local/include/flatcc
+COPY --from=flatcc-builder /build/flatcc/lib/libflatcc* /usr/local/lib/
+
+# Copy Rust toolchain from rust-builder
+COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
+COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+
 # We emulate ARM microcontrollers regardless of the host architecture
 ENV ARCH=arm
 
 WORKDIR /build
-
-# Install stable Rust via rustup; apt rustc (1.75) may be too old for zenoh-c.
-# Layer is cached as long as the toolchain stage is unchanged.
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --no-modify-path
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Clone QEMU before COPYing local files so that patch/hw changes do not bust
 # this expensive layer. Cache key: QEMU_REF arg.
@@ -153,11 +218,11 @@ RUN git clone --depth=1 --branch "${QEMU_REF}" "${QEMU_REPO}" qemu
 # other. Cache key: ZENOH_C_REF arg.
 # meson.build resolves meson.project_source_root()/../zenoh-c → /build/zenoh-c ✓
 RUN git clone --depth=1 --branch "${ZENOH_C_REF}" \
-        https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src \
+    https://github.com/eclipse-zenoh/zenoh-c.git /build/zenoh-c-src \
     && cmake -S /build/zenoh-c-src -B /build/zenoh-c-build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/build/zenoh-c \
-        -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/build/zenoh-c \
+    -DZENOHC_BUILD_WITH_SHARED_MEMORY=OFF \
     && cmake --build /build/zenoh-c-build -j"$(nproc)" \
     && cmake --install /build/zenoh-c-build \
     && rm -rf /build/zenoh-c-src /build/zenoh-c-build
@@ -193,21 +258,26 @@ RUN cd qemu && python3 /build/patches/apply_zenoh_chardev.py .
 COPY hw/ /build/virtmcu-hw/
 RUN ln -s /build/virtmcu-hw /build/qemu/hw/virtmcu \
     && grep -q "subdir('virtmcu')" /build/qemu/hw/meson.build \
-       || printf "\n# virtmcu out-of-tree peripherals\nsubdir('virtmcu')\n" \
-          >> /build/qemu/hw/meson.build
+    || printf "\n# virtmcu out-of-tree peripherals\nsubdir('virtmcu')\n" \
+    >> /build/qemu/hw/meson.build
 
 # Configure and build
-# hadolint ignore=DL3003
+# hadolint ignore=DL3003,SC2016
 RUN cd qemu \
     && ./configure \
-        --prefix=/opt/virtmcu \
-        --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
-        --enable-modules \
-        --enable-fdt \
-        --disable-werror \
-        --disable-docs \
+    --prefix=/opt/virtmcu \
+    --target-list="${ARCH}-softmmu,riscv32-softmmu,riscv64-softmmu" \
+    --enable-modules \
+    --enable-fdt \
+    --enable-gcov \
+    --disable-werror \
+    --disable-docs \
     && make -j"$(nproc)" \
-    && make install
+    && make -j"$(nproc)" plugins \
+    && make install \
+    && cp /build/zenoh-c/lib/libzenohc.so /opt/virtmcu/lib/ \
+    && find /opt/virtmcu/bin -type f -executable -exec patchelf --set-rpath '$ORIGIN/../lib' {} + \
+    && find /opt/virtmcu/lib -name "*.so" -exec patchelf --set-rpath '$ORIGIN/..' {} +
 
 # Make the installed QEMU binary and modules available inside this stage
 # (used by CI integration jobs that run smoke tests within the builder container).

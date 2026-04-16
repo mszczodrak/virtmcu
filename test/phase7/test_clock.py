@@ -1,20 +1,31 @@
+import os
 import sys
-import struct
+
 import zenoh
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(SCRIPT_DIR)), "tools")
+if TOOLS_DIR not in sys.path:
+    sys.path.append(TOOLS_DIR)
+
+from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
 DELTA1_NS = 1_000_000
 DELTA2_NS = 2_000_000
 TOPIC = "sim/clock/advance/0"
-TIMEOUT_S = 5.0
+TIMEOUT_S = 10.0
 
 
 def pack_req(delta_ns):
-    return struct.pack("<QQ", delta_ns, 0)
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    return req.pack()
 
 
 def unpack_rep(data):
-    vtime_ns, _n_frames = struct.unpack("<QI", data)
-    return vtime_ns
+    resp = ClockReadyResp.unpack(data)
+    if resp.error_code != 0:
+        print(f"WARNING: Reply error_code = {resp.error_code} (1=STALL, 2=ZENOH_ERROR)", file=sys.stderr)
+    return resp.current_vtime_ns
 
 
 def send_query(session, delta_ns, label):
@@ -23,8 +34,15 @@ def send_query(session, delta_ns, label):
         print(f"{label}: TIMEOUT — no reply received", file=sys.stderr)
         sys.exit(1)
     reply = replies[0]
+    print(f"DEBUG: reply type={type(reply)} dir={dir(reply)}")
+    if getattr(reply, "err", None) is not None:
+        print(f"{label}: ERROR reply: {reply.err}", file=sys.stderr)
+        sys.exit(1)
     if not hasattr(reply, "ok"):
-        print(f"{label}: ERROR reply: {reply}", file=sys.stderr)
+        print(f"{label}: NO 'ok' in reply: {reply}", file=sys.stderr)
+        sys.exit(1)
+    if reply.ok is None:
+        print(f"{label}: reply.ok IS NONE. Full reply: {reply}", file=sys.stderr)
         sys.exit(1)
     return unpack_rep(reply.ok.payload.to_bytes())
 

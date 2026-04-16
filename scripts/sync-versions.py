@@ -2,6 +2,7 @@
 import os
 import re
 
+
 def get_versions():
     versions = {}
     with open("VERSIONS", "r") as f:
@@ -10,6 +11,7 @@ def get_versions():
                 key, value = line.strip().split("=")
                 versions[key] = value
     return versions
+
 
 def sync():
     versions = get_versions()
@@ -34,7 +36,9 @@ def sync():
     if os.path.exists(pendulum_path):
         with open(pendulum_path, "r") as f:
             content = f.read()
-        new_content = re.sub(r'uv pip install eclipse-zenoh==[^\s]+', f'uv pip install eclipse-zenoh=={zenoh_ver}', content)
+        new_content = re.sub(
+            r"uv pip install eclipse-zenoh==[^\s]+", f"uv pip install eclipse-zenoh=={zenoh_ver}", content
+        )
         if content != new_content:
             print(f"Updating {pendulum_path} to eclipse-zenoh {zenoh_ver}")
             with open(pendulum_path, "w") as f:
@@ -45,7 +49,7 @@ def sync():
     if os.path.exists(req_path):
         with open(req_path, "r") as f:
             content = f.read()
-        new_content = re.sub(r'eclipse-zenoh==[^\s]+', f'eclipse-zenoh=={zenoh_ver}', content)
+        new_content = re.sub(r"eclipse-zenoh==[^\s]+", f"eclipse-zenoh=={zenoh_ver}", content)
         if content != new_content:
             print(f"Updating {req_path} to eclipse-zenoh {zenoh_ver}")
             with open(req_path, "w") as f:
@@ -63,6 +67,7 @@ def sync():
                 f.write(new_content)
             # Run uv lock to update uv.lock
             import subprocess
+
             try:
                 subprocess.run(["uv", "lock"], check=True)
                 print("✓ Updated uv.lock")
@@ -72,21 +77,64 @@ def sync():
     # 4. Update docker/Dockerfile
     dockerfile_path = "docker/Dockerfile"
     qemu_ver = versions.get("QEMU_VERSION")
+    cmake_ver = versions.get("CMAKE_VERSION")
     if os.path.exists(dockerfile_path):
         with open(dockerfile_path, "r") as f:
             content = f.read()
-        
-        new_content = re.sub(r'ARG ZENOH_C_REF=[^\n]+', f'ARG ZENOH_C_REF={zenoh_ver}', content)
+
+        new_content = re.sub(r"ARG ZENOH_C_REF=[^\n]+", f"ARG ZENOH_C_REF={zenoh_ver}", content)
         if qemu_ver:
-            new_content = re.sub(r'ARG QEMU_REF=v[^\n]+', f'ARG QEMU_REF=v{qemu_ver}', new_content)
-        
+            new_content = re.sub(r"ARG QEMU_REF=v[^\n]+", f"ARG QEMU_REF=v{qemu_ver}", new_content)
+        if cmake_ver:
+            new_content = re.sub(r"ARG CMAKE_VERSION=[^\n]+", f"ARG CMAKE_VERSION={cmake_ver}", new_content)
+
         # Also update the comment example
-        new_content = re.sub(r'\(no \'v\' prefix, e\.g\. [^\)]+\)', f'(no \'v\' prefix, e.g. {zenoh_ver})', new_content)
+        new_content = re.sub(r"\(no \'v\' prefix, e\.g\. [^\)]+\)", f"(no 'v' prefix, e.g. {zenoh_ver})", new_content)
 
         if content != new_content:
-            print(f"Updating {dockerfile_path} to ZENOH_C_REF {zenoh_ver}" + (f" and QEMU_REF v{qemu_ver}" if qemu_ver else ""))
+            print(
+                f"Updating {dockerfile_path} to ZENOH_C_REF {zenoh_ver}"
+                + (f" and QEMU_REF v{qemu_ver}" if qemu_ver else "")
+            )
             with open(dockerfile_path, "w") as f:
                 f.write(new_content)
+
+    # 5. Update FlatBuffers versions
+    flatbuffers_ver = versions.get("FLATBUFFERS_VERSION")
+    if flatbuffers_ver:
+        # Update requirements.txt
+        req_path = "requirements.txt"
+        if os.path.exists(req_path):
+            with open(req_path, "r") as f:
+                req_content = f.read()
+            new_req = re.sub(r"flatbuffers==[^\s]+", f"flatbuffers=={flatbuffers_ver}", req_content)
+            if req_content != new_req:
+                print(f"Updating {req_path} to flatbuffers {flatbuffers_ver}")
+                with open(req_path, "w") as f:
+                    f.write(new_req)
+
+        # Update docker/Dockerfile
+        dockerfile_path = "docker/Dockerfile"
+        if os.path.exists(dockerfile_path):
+            with open(dockerfile_path, "r") as f:
+                df_content = f.read()
+            new_df = re.sub(r"ARG FLATBUFFERS_VERSION=[^\n]+", f"ARG FLATBUFFERS_VERSION={flatbuffers_ver}", df_content)
+            if df_content != new_df:
+                print(f"Updating {dockerfile_path} to FLATBUFFERS_VERSION {flatbuffers_ver}")
+                with open(dockerfile_path, "w") as f:
+                    f.write(new_df)
+
+        # Update Rust Cargo.toml
+        cargo_path = "hw/rust/zenoh-telemetry/Cargo.toml"
+        if os.path.exists(cargo_path):
+            with open(cargo_path, "r") as f:
+                cargo_content = f.read()
+            new_cargo = re.sub(r'flatbuffers = "[^"]+"', f'flatbuffers = "{flatbuffers_ver}"', cargo_content)
+            if cargo_content != new_cargo:
+                print(f"Updating {cargo_path} to flatbuffers {flatbuffers_ver}")
+                with open(cargo_path, "w") as f:
+                    f.write(new_cargo)
+
 
 if __name__ == "__main__":
     sync()

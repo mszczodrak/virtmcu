@@ -7,12 +7,32 @@ It is the QEMU layer of **FirmwareStudio**, a digital twin platform for embedded
 where a physics engine (MuJoCo) simulates the physical world and acts as the master clock
 for all cyber nodes.
 
-The core thesis: firmware for cyber-physical systems cannot be tested in isolation. It
-reads sensors, drives actuators, and communicates with peer microcontrollers — all of
-which unfold in physical time. Correct simulation of this system requires that every
-virtual microcontroller shares the same notion of time, that inter-node communication is
-deterministically ordered by virtual time (not wall-clock scheduling), and that the
-boundary between firmware registers and physical quantities is explicitly modeled.
+### Binary Fidelity — the non-negotiable constraint
+
+**The same firmware ELF that programs a real MCU must run unmodified inside VirtMCU.**
+
+This is the highest-priority design rule. It means:
+- Peripherals are mapped at the **exact** base addresses and with the **exact** register
+  layouts specified in the target MCU's datasheet.
+- Interrupt numbers match the physical NVIC/GIC configuration.
+- Reset register values match silicon defaults.
+- Co-simulation infrastructure (`zenoh-clock`, `zenoh-netdev`, `zenoh-chardev`) is
+  entirely invisible to the firmware — no guest-visible MMIO, no firmware API.
+- Firmware is compiled once for the MCU target. It does not know whether it is running
+  on silicon or inside QEMU.
+
+Any feature that requires the firmware to be recompiled or modified to work in VirtMCU
+is a defect in VirtMCU's peripheral models or machine description, not a firmware issue.
+See [ADR-006](ADR-006-binary-fidelity.md) for enforcement rules and test requirements.
+
+### The co-simulation thesis
+
+Firmware for cyber-physical systems cannot be tested in isolation. It reads sensors,
+drives actuators, and communicates with peer microcontrollers — all of which unfold in
+physical time. Correct simulation requires that every virtual MCU shares the same notion
+of time, that inter-node communication is deterministically ordered by virtual time (not
+wall-clock scheduling), and that the boundary between firmware registers and physical
+quantities is explicitly modeled.
 
 virtmcu addresses these requirements at the QEMU layer, using native C/Rust QOM modules
 linked directly into the emulator. No Python daemons run in the simulation loop.
@@ -126,8 +146,10 @@ virtual time rather than injected at whatever wall-clock moment the user typed.
 **Wire protocol** (TimeAuthority ↔ QEMU):
 ```
 GET sim/clock/advance/{node_id}
-  payload → { uint64 delta_ns; uint64 mujoco_time_ns; }
-  reply   ← { uint64 current_vtime_ns; uint32 n_pending_frames; }
+  payload → { uint64 delta_ns; uint64 mujoco_time_ns; }           (16 bytes)
+  reply   ← { uint64 current_vtime_ns; uint32 n_frames; uint32 error_code; }  (16 bytes)
+
+error_code: 0=OK, 1=STALL (QEMU didn't reach TB boundary), 2=ZENOH_ERROR
 ```
 
 ### Pillar 3 — Sensor/Actuator Abstraction (SAL/AAL)
@@ -439,7 +461,27 @@ To support LLM-driven debugging and lifecycle management, virtmcu includes a sta
 
 ---
 
-## 10. Guide for Junior Developers
+## 11. Common Pitfalls & Troubleshooting
+
+### SysBus Mapping vs. `-device` (The arm-generic-fdt Trap)
+A frequent point of confusion for developers migrating from standard QEMU machines is why a device added via the `-device` command line option is not accessible to the guest firmware (resulting in Data Aborts).
+
+**The Cause**: In the `arm-generic-fdt` machine, QEMU uses the Device Tree as the source of truth for both instantiation *and* memory mapping. If you add a device via `-device`, QEMU will instantiate the object, but it will **not** automatically map its MMIO regions into the guest's physical address space. Mapping only occurs if a corresponding node exists in the DTB with a `reg` property.
+
+**The Fix**: Always declare your peripherals in the platform YAML. The `yaml2qemu.py` tool will ensure that both the DTB node is created (mapping the device) and the corresponding `-device` argument is either handled by QEMU's FDT loader or added to the CLI.
+
+### `mmio-socket-bridge` Address Offsets
+The `mmio-socket-bridge` (and most other virtmcu bridges) delivers **offsets relative to the region base**, not absolute physical addresses. 
+
+**The Cause**: This follows standard QEMU `MemoryRegionOps` behavior. If a bridge is mapped at `0x10000000` and the guest performs a read at `0x10000004`, the `addr` field in the `mmio_req` packet will be `0x00000004`.
+
+**Adapter Contract**: Adapters receive pure relative offsets and must NOT add the base address back. The `addr` field in `mmio_req` is always `guest_PA - region_base`, as QEMU computes this before invoking the `MemoryRegionOps` callback.
+
+### Zenoh Router Reachability
+If QEMU hangs at startup or `TimeAuthority` reports a "Timeout" during `sim/clock/advance`, first verify that the Zenoh router is reachable from the QEMU container.
+
+- **Check `ZENOH_ROUTER`**: Ensure the `router=` property on `zenoh-clock` matches your router's endpoint.
+- **Status Codes**: Check the `status` field in the `ClockReadyPayload`. A status of `1` (`ZCLOCK_STATUS_STALL_TIMEOUT`) indicates that QEMU reached the router but failed to advance instructions fast enough to hit the next quantum boundary.
 
 If you are new to QEMU, SystemC, physics simulators (like MuJoCo), or Zenoh, the `virtmcu` codebase can seem intimidating because it glues all these domains together. Here is how you should approach learning the system:
 

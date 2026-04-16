@@ -1,0 +1,66 @@
+import os
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(SCRIPT_DIR, "telemetry_fbs"))
+
+import zenoh  # noqa: E402
+from Virtmcu.Telemetry.TraceEvent import TraceEvent  # noqa: E402
+
+
+def on_sample(sample):
+    payload = sample.payload.to_bytes()
+    try:
+        ev = TraceEvent.GetRootAs(payload, 0)
+
+        ts = ev.TimestampNs()
+        ev_type = ev.Type()
+        ev_id = ev.Id()
+        val = ev.Value()
+        name = ev.DeviceName()
+        if name:
+            name_str = name.decode("utf-8")
+        else:
+            name_str = ""
+
+        if ev_type == 0:  # CPU_STATE
+            type_str = "CPU_STATE"
+            id_str = f"cpu={ev_id}"
+        elif ev_type == 1:  # IRQ
+            type_str = "IRQ"
+            slot = ev_id >> 16
+            pin = ev_id & 0xFFFF
+            id_str = f"slot={slot:2} pin={pin:2}"
+            if name_str:
+                id_str += f" ({name_str})"
+        elif ev_type == 2:  # PERIPHERAL
+            type_str = "PERIPHERAL"
+            id_str = f"id={ev_id}"
+        else:
+            type_str = "UNKNOWN"
+            id_str = f"id={ev_id}"
+
+        print(f"[{ts:15}] {type_str:10} {id_str} val={val:3}")
+    except Exception as e:
+        print(f"Received malformed payload of size {len(payload)}: {payload.hex()} ({e})")
+
+
+def main():
+    node_id = sys.argv[1] if len(sys.argv) > 1 else "0"
+    topic = f"sim/telemetry/trace/{node_id}"
+    print(f"Listening on {topic}...")
+
+    session = zenoh.open(zenoh.Config())
+    _sub = session.declare_subscriber(topic, on_sample)
+
+    try:
+        import time
+
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

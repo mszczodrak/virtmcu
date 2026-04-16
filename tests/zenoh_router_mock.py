@@ -10,11 +10,17 @@ Multicast is explicitly disabled so the test fails if QEMU ignores the
 router= property and falls back to multicast peer discovery.
 """
 
-import struct
+import os
 import sys
 import time
 
-import zenoh
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TOOLS_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "tools")
+if TOOLS_DIR not in sys.path:
+    sys.path.append(TOOLS_DIR)
+
+import zenoh  # noqa: E402
+from vproto import ClockAdvanceReq, ClockReadyResp  # noqa: E402
 
 DELTA_NS = 1_000_000  # 1 ms — enough to let the timer fire quickly
 TOPIC = "sim/clock/advance/0"
@@ -22,12 +28,13 @@ TIMEOUT_S = 15.0
 
 
 def pack_req(delta_ns: int) -> bytes:
-    return struct.pack("<QQ", delta_ns, 0)
+    req = ClockAdvanceReq(delta_ns=delta_ns, mujoco_time_ns=0)
+    return req.pack()
 
 
 def unpack_rep(data: bytes) -> int:
-    vtime_ns, _n_frames = struct.unpack("<QI", data)
-    return vtime_ns
+    resp = ClockReadyResp.unpack(data)
+    return resp.current_vtime_ns
 
 
 def main() -> None:
