@@ -6,8 +6,8 @@
 # in the `scripts/` directory or to the QEMU build system.
 #
 # Most developers will only need:
-#   make setup    — Clone QEMU, apply patches, and build from scratch (run once).
-#   make          — Perform an incremental rebuild of QEMU after modifying `hw/`.
+#   make setup-initial — Clone QEMU, apply patches, and build from scratch (run ONLY once per environment).
+#   make build         — Perform an incremental rebuild of QEMU after modifying `hw/`. (Default target)
 #   make run      — Launch QEMU using the minimal Phase 1 test DTB.
 # ==============================================================================
 
@@ -17,7 +17,7 @@ QEMU_BUILD?= $(QEMU_SRC)/build-virtmcu
 # Automatically determine the number of parallel jobs for make
 JOBS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 4)
 
-.PHONY: all setup build run clean distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
+.PHONY: all setup-initial build run clean clean-sim clean-debug distclean venv test test-unit test-robot test-all lint fmt install-hooks sync-versions check-versions docker-dev docker-all docker-base docker-toolchain docker-devenv docker-builder docker-runtime ci-local ci-full
 
 # By default, perform an incremental build
 all: build
@@ -42,7 +42,8 @@ check-versions:
 # ------------------------------------------------------------------------------
 
 # Initialize the workspace: clone QEMU, apply all patches, and perform a full build.
-setup:
+# WARNING: This applies core patches that can trigger massive rebuilds. Run ONLY for first-time setup.
+setup-initial:
 	@bash scripts/setup-qemu.sh
 
 # Incremental rebuild: useful when you only modify files in the `hw/` directory.
@@ -78,6 +79,7 @@ venv:
 
 # Run integration smoke tests (Bash/QEMU level tests for phases 1 & 2)
 test-integration: venv
+	@bash scripts/cleanup-sim.sh --quiet
 	@echo "==> Building test artifacts..."
 	@$(MAKE) -C test/phase1
 	@$(MAKE) -C test/phase8
@@ -87,7 +89,8 @@ test-integration: venv
 	@echo "==> Running integration tests..."
 	@for test_script in test/*/smoke_test.sh; do \
 		echo "--> Running $$test_script"; \
-		bash "$$test_script" || exit 1; \
+		bash "$$test_script" || { bash scripts/cleanup-sim.sh; exit 1; }; \
+		bash scripts/cleanup-sim.sh --quiet; \
 	done
 	@echo "✓ All integration tests passed."
 
@@ -101,7 +104,7 @@ test: venv
 # Alias: same as test — explicit name for CI scripts.
 test-unit: test
 
-# Run Robot Framework integration tests (requires QEMU built via make setup).
+# Run Robot Framework integration tests (requires QEMU built via make setup-initial).
 test-robot: venv
 	export PYTHONPATH=$(CURDIR) && \
 	uv run robot \
@@ -114,8 +117,9 @@ test-robot: venv
 test-coverage-guest: build-test-artifacts
 	@echo "==> Running guest firmware coverage (drcov)..."
 	uv run python3 -m pyelftools --version >/dev/null 2>&1 || uv pip install pyelftools
-	@./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
-	  -display none -plugin third_party/qemu/build-virtmcu/contrib/plugins/libdrcov.so,filename=hello.drcov -d plugin
+	@DRCOV_SO=$$(find third_party/qemu -name "libdrcov.so" 2>/dev/null | head -n 1); \
+	timeout 5s ./scripts/run.sh --dtb test/phase1/minimal.dtb --kernel test/phase1/hello.elf \
+	  -display none -plugin "$$DRCOV_SO",filename=hello.drcov -d plugin || true
 	@uv run python3 tools/analyze_coverage.py hello.drcov test/phase1/hello.elf --fail-under 80
 	@echo "✓ Guest coverage check passed."
 
@@ -145,6 +149,17 @@ build-test-artifacts:
 test-all: test test-integration test-robot test-coverage-guest
 
 # ------------------------------------------------------------------------------
+# Continuous Integration (CI) - Parity with GitHub Actions
+# ------------------------------------------------------------------------------
+# This target guarantees that local CI passes only if the GitHub Actions CI
+# and the GHCR Docker Publish workflows will also pass.
+ci-local: lint test-all
+	@echo "==> Verifying Docker Publish (GitHub Actions parity)..."
+	@bash scripts/docker-build.sh devenv
+	@bash scripts/docker-build.sh runtime
+	@echo "✓ Local CI complete! Code and Docker artifacts are ready for GitHub."
+
+# ------------------------------------------------------------------------------
 # Lint & Format
 # ------------------------------------------------------------------------------
 
@@ -160,6 +175,10 @@ lint-cargo:
 	@cd hw/rust && cargo metadata --no-deps --format-version 1 | \
 		python3 -c "import sys,json; m=json.load(sys.stdin); vs=set(p['version'] for p in m['packages']); assert len(vs)==1, f'version drift: {vs}'"
 	@echo "✓ Cargo workspace versions aligned."
+	@echo "==> Running cargo fmt --check..."
+	@cd hw/rust && cargo fmt --all --check
+	@echo "==> Running cargo clippy..."
+	@cd hw/rust && cargo clippy --workspace -- -D warnings -D clippy::all
 
 # Auto-fix formatting and fixable lint errors.
 fmt: venv
@@ -305,13 +324,36 @@ docker-runtime:
 # Clean
 # ------------------------------------------------------------------------------
 
+# Kill all simulation-related processes and clean up temporary test files.
+clean-sim:
+	@bash scripts/cleanup-sim.sh
+
+# Alias for comprehensive cleanup of generated debugging and test artifacts.
+clean-debug: clean
+
 # Clean up Python artifacts, test binaries, and local tool builds.
 # Note: This does NOT clean the QEMU build tree or remove downloaded sources.
 clean:
+	@echo "==> Cleaning generated files and test artifacts..."
 	find . -name "*.pyc" -delete
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-	-$(MAKE) -C test/phase1 clean
-	-$(MAKE) -C test/phase8 clean
+	find . -name "*.profraw" -delete
+	find . -name "*.log" -delete
+	find . -name "*.dtb" -not -path "./third_party/*" -delete
+	find . -name "*.o" -not -path "./third_party/*" -delete
+	find . -name "*.elf" -not -path "./tests/firmware/*" -not -path "./third_party/*" -delete
+	find . -name "*.cli" -delete
+	find . -name "*.arch" -delete
+	find . -name "*.gcov" -delete
+	find . -name "virtmcu-timeout-*" -delete
+	find . -name "qmp-timeout-*" -delete
+	rm -f .coverage
+	rm -rf .pytest_cache .ruff_cache
+	rm -rf test-results/
+	rm -rf test/*/results/
+	rm -rf install/
+	rm -f *_output.txt
+	rm -f log.html report.html output.xml
 	rm -rf tools/cyber_bridge/build
 	rm -rf tools/systemc_adapter/build
 	rm -rf tools/zenoh_coordinator/target
@@ -319,9 +361,9 @@ clean:
 	@echo "✓ Clean complete (QEMU sources and .venv remain)."
 
 # Deep clean: completely remove downloaded sources, virtual environments, and all artifacts.
-# You will need to run 'make setup' again after this.
+# You will need to run 'make setup-initial' again after this.
 distclean: clean
 	rm -rf .venv
 	rm -rf third_party
 	rm -rf test-results
-	@echo "✓ Deep clean complete. Run 'make setup' to rebuild the environment."
+	@echo "✓ Deep clean complete. Run 'make setup-initial' to rebuild the environment."

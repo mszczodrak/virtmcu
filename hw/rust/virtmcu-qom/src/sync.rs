@@ -1,14 +1,17 @@
-#[repr(C)]
+use core::ffi::c_uint;
+
+#[repr(C, align(8))]
 pub struct QemuMutex {
-    _opaque: [u8; 0],
+    _opaque: [u8; 64],
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct QemuCond {
-    _opaque: [u8; 0],
+    _opaque: [u8; 56],
 }
 
 extern "C" {
+    pub fn virtmcu_bql_locked() -> bool;
     pub fn virtmcu_bql_lock();
     pub fn virtmcu_bql_unlock();
 
@@ -78,3 +81,6 @@ impl Drop for QemuMutexGuard<'_> {
         unsafe { virtmcu_mutex_unlock(self.mutex) };
     }
 }
+
+const _: () = assert!(core::mem::size_of::<QemuMutex>() == 64);
+const _: () = assert!(core::mem::size_of::<QemuCond>() == 56);

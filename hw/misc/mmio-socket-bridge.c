@@ -8,6 +8,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/log.h"
+#include "qemu/error-report.h"
 #include "qemu/module.h"
 #include "qemu/main-loop.h"
 #include "qemu/sockets.h"
@@ -20,10 +21,14 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <poll.h>
 
 #include "virtmcu_proto.h"
 
 #define TYPE_MMIO_SOCKET_BRIDGE "mmio-socket-bridge"
+
+/* Maximum time to wait for a response from the SystemC adapter per MMIO op. */
+#define BRIDGE_TIMEOUT_MS 500
 OBJECT_DECLARE_SIMPLE_TYPE(MmioSocketBridgeState, MMIO_SOCKET_BRIDGE)
 
 struct MmioSocketBridgeState {
@@ -49,7 +54,13 @@ struct MmioSocketBridgeState {
 static bool writen(int fd, const void *buf, size_t len)
 {
     const char *p = buf;
+    struct pollfd pfd = { .fd = fd, .events = POLLOUT };
     while (len > 0) {
+        int ret = poll(&pfd, 1, BRIDGE_TIMEOUT_MS);
+        if (ret <= 0) {
+            if (ret < 0 && errno == EINTR) continue;
+            return false;
+        }
         ssize_t n = write(fd, p, len);
         if (n <= 0) {
             if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
@@ -60,6 +71,14 @@ static bool writen(int fd, const void *buf, size_t len)
     return true;
 }
 
+static int read_timeout(int fd, void *buf, size_t len, int timeout_ms)
+{
+    struct pollfd pfd = { .fd = fd, .events = POLLIN };
+    int ret = poll(&pfd, 1, timeout_ms);
+    if (ret <= 0) return ret;
+    return read(fd, buf, len);
+}
+
 static void bridge_sock_handler(void *opaque)
 {
     MmioSocketBridgeState *s = opaque;
@@ -67,6 +86,7 @@ static void bridge_sock_handler(void *opaque)
         int n = read(s->sock_fd, s->rx_buf + s->rx_idx, sizeof(struct sysc_msg) - s->rx_idx);
         if (n <= 0) {
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return;
+            error_report("mmio-socket-bridge: remote disconnected, closing socket fd %d", s->sock_fd);
             qemu_set_fd_handler(s->sock_fd, NULL, NULL, NULL);
             close(s->sock_fd); s->sock_fd = -1;
             qemu_mutex_lock(&s->sock_mutex);
@@ -97,7 +117,24 @@ static void send_req_and_wait(MmioSocketBridgeState *s, struct mmio_req *req, st
     qemu_mutex_lock(&s->sock_mutex);
     s->has_resp = false;
     if (writen(s->sock_fd, req, sizeof(*req))) {
-        while (!s->has_resp) qemu_cond_wait(&s->resp_cond, &s->sock_mutex);
+        bool timed_out = false;
+        while (!s->has_resp) {
+            if (!qemu_cond_timedwait(&s->resp_cond, &s->sock_mutex, BRIDGE_TIMEOUT_MS)) {
+                timed_out = true;
+                break;
+            }
+        }
+        if (timed_out) {
+            int fd = s->sock_fd;
+            s->sock_fd = -1;
+            qemu_mutex_unlock(&s->sock_mutex);
+            bql_lock();
+            error_report("mmio-socket-bridge: timeout on socket fd %d after %d ms, disconnecting",
+                fd, BRIDGE_TIMEOUT_MS);
+            qemu_set_fd_handler(fd, NULL, NULL, NULL);
+            close(fd);
+            return;
+        }
         *resp = s->current_resp;
     }
     qemu_mutex_unlock(&s->sock_mutex);
@@ -159,9 +196,9 @@ static void bridge_realize(DeviceState *dev, Error **errp)
     }
 
     struct virtmcu_handshake hs_in;
-    int n = read(s->sock_fd, &hs_in, sizeof(hs_in));
+    int n = read_timeout(s->sock_fd, &hs_in, sizeof(hs_in), BRIDGE_TIMEOUT_MS);
     if (n != sizeof(hs_in)) {
-        error_setg(errp, "failed to read handshake from %s", s->socket_path);
+        error_setg(errp, "failed to read handshake from %s (timeout or disconnect)", s->socket_path);
         close(s->sock_fd); s->sock_fd = -1; return;
     }
     if (hs_in.magic != VIRTMCU_PROTO_MAGIC || hs_in.version != VIRTMCU_PROTO_VERSION) {

@@ -10,4 +10,4 @@ crate-type = ["staticlib"]
 
 
 [dependencies]
-virtmcu-qom = { path = "../virtmcu-qom" }
+virtmcu-qom.workspace = true

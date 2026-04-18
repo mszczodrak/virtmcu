@@ -37,6 +37,10 @@ report.html
 *_output.txt
 *.cli
 *.arch
+virtmcu-timeout-*
+qmp-timeout*
+*.profraw
+*.gcov
 
 # IDEs and Tools
 .vscode/
@@ -51,7 +55,4 @@ target/
 tools/zenoh_coordinator/target/
 hw/rust-dummy/target/
 hw/rust-dummy/Cargo.lock
-*.gcov
 test-results/
-\n.env
-*.profraw

@@ -71,6 +71,16 @@ When using \`mmio-socket-bridge\`, every MMIO read/write blocks the QEMU TCG thr
 
 ---
 
+## Development Efficiency
+
+- **Avoid Redundant `make setup`**: Only run `make setup` for the initial environment setup or if QEMU dependencies change. It applies core patches that can trigger massive rebuilds.
+- **Use `make build` for Incremental Changes**: For standard changes to `hw/` peripherals, `make build` is sufficient and much faster.
+- **Targeted Ninja Builds**: For the fastest turnaround when working on a specific peripheral, run ninja directly on the module target:
+  `ninja -C third_party/qemu/build-virtmcu hw-virtmcu-<name>.so`
+- **Pre-installed QEMU**: In many environments, QEMU is pre-installed at `/opt/virtmcu`. You only need to build if you are modifying the emulator or its peripheral plugins.
+
+---
+
 ## Directory Structure
 
 ```
@@ -117,9 +127,15 @@ To ensure the highest level of professional software engineering, all agents MUS
 - Use platform-appropriate path joining (e.g., `os.path.join` in Python, `path::PathBuf` in Rust, `std::filesystem` in C++).
 - Leverage environment variables for system-specific configuration.
 
-### 2. Explicit Constants (No Magic Numbers)
-- **BANNED:** Inline literal numbers without clear context (e.g., `delay(500)`, `buffer[1024]`).
-- **Required:** Define named constants or enums with clear documentation explaining the value's origin (e.g., from a datasheet, a performance budget, or a protocol spec).
+### 2. Explicit Constants (NEVER Use Magic Numbers!)
+- **BANNED:** Inline literal numbers or "magic numbers" in the code.
+- **REQUIRED:** If a number needs to be entered (e.g., `1024`), you MUST create a `const` descriptive variable with a comment explaining what it is and why it has that value, and then use that variable.
+- Example: Instead of `buffer = [0; 1024]`, do:
+  ```rust
+  /// Standard payload size for the bridge
+  const MAX_PAYLOAD_SIZE: usize = 1024;
+  let buffer = [0; MAX_PAYLOAD_SIZE];
+  ```
 - Group related constants in configuration files or dedicated `constants` modules.
 
 ### 3. Verification & TDD (The "Beyonce Rule")
@@ -141,6 +157,54 @@ To ensure the highest level of professional software engineering, all agents MUS
 ### 6. Protected Files
 - **DO NOT** automatically edit `.env` or `VERSIONS` files. These files contain specific version pins and local secrets (via symlinking) that should only be modified by the user or dedicated synchronization scripts (e.g., `make sync-versions`).
 
+---
+
+## Common Pitfalls & Troubleshooting
+
+### Stale Simulation Processes (Multiple QEMU Instances)
+During development, you may encounter "stale" or orphaned QEMU or Zenoh processes. These processes can hold onto ports, UNIX sockets, or CPU resources, causing subsequent runs to fail with "Address already in use" or mysterious timeouts.
+
+**The Fix:** Manually terminate any lingering processes or use the project cleanup script:
+```bash
+make clean-sim
+# or
+bash scripts/cleanup-sim.sh
+```
+*Note: Stale process interference is the #1 cause of "it passes locally but fails next time" bugs.*
+
+### Interactive QEMU Debugging
+If a node hangs or fails to boot, run it interactively to see the firmware's console output.
+- **Action**: Run the `run.sh` command without `-monitor none` or `-serial file:...` and use `-nographic`.
+- **Exit**: To exit an interactive QEMU session, press `Ctrl+A` followed by `X`.
+
+### SysBus Mapping vs. `-device`
+In the `arm-generic-fdt` machine, a device added via `-device` is NOT automatically mapped into guest memory. 
+- **The Cause**: Mapping only occurs if a corresponding node exists in the Device Tree (DTB) with a `reg` property.
+- **The Fix**: Always declare peripherals in the board YAML files. The `yaml2qemu.py` tool handles the mapping.
+
+### MMIO Offset Contract
+The `mmio-socket-bridge` delivers **region-relative offsets**, not absolute physical addresses. 
+- **Example**: If a bridge is at `0x10000000` and the guest reads `0x10000004`, the bridge receives `0x04`.
+- **Requirement**: Your MMIO adapter/model must handle these offsets directly without adding the base address.
+
+### "Works on My Machine" (Local vs. CI Drift)
+If a fix passes locally but fails in CI, it's often due to manual edits in `third_party/qemu` or untracked files that aren't part of the automated patch mechanism.
+- **The Rule**: If CI cannot reproduce your local setup from `git clone` + `make setup`, your fix is not complete.
+- **The Check**: Always run `git status` after a debugging session to ensure all changes are tracked.
+
+---
+
+## Before Every Commit — Mandatory Lint Gate
+
+To ensure CI remains green and Rust code follows project standards, you MUST run the linting suite before every commit:
+
+```bash
+make lint     # Runs ruff, version checks, and cargo clippy (fails loudly)
+```
+
+**Pre-commit Hook**: A git `pre-commit` hook is installed that runs `make lint` automatically. If it fails, the commit will be blocked. Fix all lint/clippy errors before attempting to commit again.
+
+---
 
 ## CI/CD Troubleshooting & "Make CI Green" Workflow
 
@@ -152,3 +216,39 @@ When instructed to "fix CI", "make CI green", or address pipeline failures, you 
 4. **Fix & Verify:** Implement the fix and verify it passes the newly aligned local test suite.
 5. **Push:** Commit and push the changes.
 6. **Monitor & Loop:** Autonomously monitor the new CI run (e.g., using `gh run watch`). If it fails, immediately restart this loop. Do not stop or prompt the user until all checks are officially green.
+
+---
+
+## Local CI Loop Workflow (The "Local Green" Loop)
+
+When asked to **"Fix CI locally"**, **"Run CI loop"**, or **"Make it pass"**, you MUST enter this autonomous loop:
+
+1. **Identify Pipeline:** Determine the full suite of local validation commands (e.g., `make lint`, `make build`, `make test`).
+2. **Execute & Diagnose:** Run the entire suite. Capture all failures (lint errors, build breaks, test regressions).
+3. **Surgical Fix:** Address the first failure.
+4. **Commit:** Once a fix is verified locally, commit the changes with a descriptive message (**DO NOT push**).
+5. **Iterate:** Repeat steps 2-4 until the *entire* suite passes.
+6. **Final Report:** Once all checks are green, report the major findings and fixes. Do not stop until the pipeline is fully passing.
+
+---
+
+## Test Coverage Loop Workflow (The "Coverage" Loop)
+
+When asked to **"Increase coverage"** or **"Improve test coverage"**, you MUST enter this autonomous loop:
+
+1. **Baseline:** Run the coverage tool (e.g., `make coverage` or `pytest --cov`) to identify current gaps.
+2. **Targeting:** Identify the most critical untested paths (e.g., error handling, boundary conditions).
+3. **Implement Tests:** Write new tests specifically targeting the identified gaps.
+4. **Verify:** Run coverage again to confirm the increase. Ensure no existing tests were broken.
+5. **Commit:** Commit the new tests and any necessary code changes.
+6. **Iterate:** Repeat until the coverage goal is met or there are no more obvious improvements to be made.
+
+---
+
+## Note to Developers: Invoking Autonomous Loops
+
+To trigger these workflows, use direct commands:
+- *"Fix CI locally and commit."*
+- *"Run the local CI loop until everything passes."*
+- *"Increase code coverage for the physics module."*
+- *"Keep fixing CI locally, don't stop until all lints and tests pass."*

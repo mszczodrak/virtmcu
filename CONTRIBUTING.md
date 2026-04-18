@@ -45,7 +45,7 @@ Open the repo in VS Code and accept **"Reopen in Container"** when prompted.
 The devcontainer automatically:
 1. Builds the toolchain image (`docker/Dockerfile` `devenv` stage)
 2. Initializes the QEMU submodule
-3. Runs `make setup` — patches and builds QEMU (~10 min, runs once)
+3. Runs `make setup-initial` — patches and builds QEMU (~10 min, runs once)
 4. Synchronizes the Python environment using `uv sync`
 5. Activates the venv in every new terminal
 
@@ -124,6 +124,20 @@ git -C third_party/qemu format-patch HEAD~1 -o patches/
 # Or regenerate the full series:
 git -C third_party/qemu format-patch <base-commit>..HEAD -o patches/
 ```
+
+### Cleaning up Simulation Processes
+
+During development, especially when debugging integration tests or dealing with unexpected timeouts, you might encounter multiple "stale" QEMU or Zenoh processes running in the background. These orphaned processes can hold onto ports, UNIX sockets, or CPU resources, causing subsequent test runs to fail mysteriously.
+
+To ensure a completely clean environment:
+
+```bash
+make clean-sim
+```
+
+This command runs `scripts/cleanup-sim.sh`, which safely terminates all running instances of `qemu-system-arm`, `qemu-system-riscv`, `qemu-system-aarch64`, `zenoh_router`, and `zenoh_coordinator`. It also cleans up any residual temporary files (like `*.dtb` and `.sock`) left in `/tmp`.
+
+*Note: The `make test-integration` target automatically runs this cleanup script before and after every test.*
 
 ### Python Tools (`tools/`)
 

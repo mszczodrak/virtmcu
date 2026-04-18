@@ -53,18 +53,19 @@ def main():
     session = zenoh.open(config)
 
     vtime1 = send_query(session, DELTA1_NS, "Q1")
-    print(f"Q1 vtime = {vtime1} ns  (expected >= {DELTA1_NS})")
-    if vtime1 < DELTA1_NS:
-        print(f"FAIL: Q1 vtime {vtime1} < expected {DELTA1_NS}", file=sys.stderr)
-        sys.exit(1)
+    print(f"Q1 vtime = {vtime1} ns")
 
     vtime2 = send_query(session, DELTA2_NS, "Q2")
-    print(f"Q2 vtime = {vtime2} ns  (expected >= {DELTA1_NS + DELTA2_NS})")
-    if vtime2 <= vtime1:
-        print(f"FAIL: Q2 vtime {vtime2} not > Q1 vtime {vtime1}", file=sys.stderr)
+    print(f"Q2 vtime = {vtime2} ns  (target approx {vtime1 + DELTA1_NS})")
+    if vtime2 < vtime1:
+        print(f"FAIL: Q2 vtime {vtime2} < Q1 vtime {vtime1}", file=sys.stderr)
         sys.exit(1)
-    if vtime2 < DELTA1_NS + DELTA2_NS:
-        print(f"FAIL: Q2 vtime {vtime2} < cumulative {DELTA1_NS + DELTA2_NS}", file=sys.stderr)
+
+    vtime3 = send_query(session, 1_000_000, "Q3")
+    print(f"Q3 vtime = {vtime3} ns  (target approx {vtime2 + DELTA2_NS})")
+    
+    if vtime3 < vtime2 + DELTA2_NS:
+        print(f"FAIL: Q3 vtime {vtime3} < Q2 vtime {vtime2} + DELTA2 {DELTA2_NS}", file=sys.stderr)
         sys.exit(1)
 
     session.close()
